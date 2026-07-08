@@ -1,0 +1,25 @@
+# codetospec knowledge graph
+
+> Spécification des règles métier extraite automatiquement du code source.
+> Chaque nœud est un fichier markdown avec un frontmatter YAML portant des edges typés.
+
+Navigation : commencer par nodes/domains/, puis suivre les edges du frontmatter
+(belongs_to, touches, exposed_by, depends_on). graph.json contient le graphe complet
+au format machine ; les citations `path:lines` pointent dans le dépôt source.
+
+## domain
+
+- nodes/domains/billing.md : Domaine billing
+- nodes/domains/crm.md : Domaine crm
+
+## entity
+
+- nodes/entities/invoices.md : invoices
+
+## endpoint
+
+- nodes/endpoints/post-api-activate.md : POST /api/activate
+
+## rule
+
+- nodes/rules/billing.prorata-activation.md : Prorata à l'activation

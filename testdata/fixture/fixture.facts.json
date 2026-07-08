@@ -1,0 +1,42 @@
+{
+  "schema": "codetospec/facts/v1",
+  "facts": [
+    {
+      "kind": "route",
+      "id": "route.post./api/activate",
+      "attrs": {
+        "method": "POST",
+        "path": "/api/activate",
+        "controller": "App\\Http\\Controllers\\ActivationController",
+        "action": "store"
+      },
+      "source": {"path": "routes/web.php", "lines": "5-5"},
+      "origin": "fixture",
+      "certainty": "static"
+    },
+    {
+      "kind": "route",
+      "id": "route.get./api/invoices",
+      "attrs": {
+        "method": "GET",
+        "path": "/api/invoices",
+        "controller": "App\\Http\\Controllers\\InvoiceController",
+        "action": "index"
+      },
+      "source": {"path": "routes/web.php", "lines": "6-6"},
+      "origin": "fixture",
+      "certainty": "static"
+    },
+    {
+      "kind": "table",
+      "id": "table.invoices",
+      "attrs": {
+        "name": "invoices",
+        "columns": "id:id, subscriber_id:integer, amount:decimal, activated_at:date"
+      },
+      "source": {"path": "database/migrations/2020_01_01_000000_create_invoices_table.php", "lines": "11-16"},
+      "origin": "fixture",
+      "certainty": "static"
+    }
+  ]
+}

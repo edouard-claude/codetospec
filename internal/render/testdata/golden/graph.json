@@ -1,0 +1,47 @@
+{
+  "nodes": {
+    "domain.billing": {
+      "type": "domain",
+      "file": "nodes/domains/billing.md",
+      "edges": [
+        {
+          "type": "depends_on",
+          "to": "domain.crm"
+        }
+      ]
+    },
+    "domain.crm": {
+      "type": "domain",
+      "file": "nodes/domains/crm.md",
+      "edges": []
+    },
+    "endpoint.post-api-activate": {
+      "type": "endpoint",
+      "file": "nodes/endpoints/post-api-activate.md",
+      "edges": []
+    },
+    "entity.invoices": {
+      "type": "entity",
+      "file": "nodes/entities/invoices.md",
+      "edges": []
+    },
+    "rule.billing.prorata-activation": {
+      "type": "rule",
+      "file": "nodes/rules/billing.prorata-activation.md",
+      "edges": [
+        {
+          "type": "belongs_to",
+          "to": "domain.billing"
+        },
+        {
+          "type": "touches",
+          "to": "entity.invoices"
+        },
+        {
+          "type": "exposed_by",
+          "to": "endpoint.post-api-activate"
+        }
+      ]
+    }
+  }
+}

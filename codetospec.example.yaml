@@ -1,0 +1,22 @@
+# codetospec.yaml — everything is optional.
+# Place this file at the root of the analyzed repository (--src), or pass
+# --config <path>.
+
+# Directories ignored during the walk (overrides the built-in default).
+exclude: [vendor, node_modules, storage]
+
+# External native extractors (facts protocol codetospec/facts/v1).
+# {src} is substituted with the --src directory; the command runs from the
+# codetospec working directory with the given timeout.
+extractors:
+  - name: php
+    cmd: php
+    args: [extractors/php/extract.php, --root, "{src}"]
+    timeout: 300s
+
+# Additional facts JSON files, same as repeating --facts.
+facts_files: []
+
+# How domains are derived: auto (namespace when available, else first
+# directory), namespace, or directory.
+domain_strategy: auto

@@ -1,0 +1,10 @@
+{
+    "name": "codetospec/php-extractor",
+    "description": "Native PHP facts extractor for codetospec (codetospec/facts/v1 protocol)",
+    "type": "project",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "nikic/php-parser": "^5.0"
+    }
+}
