@@ -107,6 +107,49 @@ func TestBuildProducesAllNodeTypes(t *testing.T) {
 	}
 }
 
+// TestBuildDomainDependsOnGoStyleImports covers the suffix fallback: Go
+// imports carry a path ("app/internal/billing") while module facts carry the
+// bare package name ("billing").
+func TestBuildDomainDependsOnGoStyleImports(t *testing.T) {
+	facts := []extract.Fact{
+		{
+			Kind: "module", ID: "module.billing",
+			Attrs:  map[string]string{"name": "billing"},
+			Source: extract.Ref{Path: "internal/billing/calc.go", Lines: "1-1"},
+		},
+		{
+			Kind: "module", ID: "module.invoice",
+			Attrs:  map[string]string{"name": "invoice"},
+			Source: extract.Ref{Path: "internal/invoice/invoice.go", Lines: "1-1"},
+		},
+		{
+			Kind: "import", ID: "import.internal/invoice/invoice.go#app/internal/billing",
+			Attrs:  map[string]string{"target": "app/internal/billing", "namespace": "invoice"},
+			Source: extract.Ref{Path: "internal/invoice/invoice.go", Lines: "5-5"},
+		},
+	}
+	rule := func(domain string) reducer.Output {
+		return reducer.Output{Domain: domain, DomainSummary: "s", Rules: []reducer.Rule{{
+			Slug: "r", Title: "T", EarsKind: "event", Requirement: "QUAND x, le systeme doit y.",
+			Citations:          []extract.Ref{{Path: "internal/" + domain + "/x.go", Lines: "1-2"}},
+			AcceptanceCriteria: []string{"a", "b"},
+		}}}
+	}
+	nodes := Build(facts, []reducer.Output{rule("billing"), rule("invoice")}, extract.DomainResolver{})
+	for _, n := range nodes {
+		if n.ID != "domain.invoice" {
+			continue
+		}
+		for _, e := range n.Edges {
+			if e.Type == "depends_on" && e.To == "domain.billing" {
+				return
+			}
+		}
+		t.Fatalf("domain.invoice should depend on domain.billing via suffix match, edges = %+v", n.Edges)
+	}
+	t.Fatal("domain.invoice not found")
+}
+
 func TestBuildDomainDependsOnFromImports(t *testing.T) {
 	nodes := Build(fixtureFacts(), fixtureReduced(), extract.DomainResolver{})
 	for _, n := range nodes {

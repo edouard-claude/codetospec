@@ -260,6 +260,23 @@ func domainDependencies(facts []extract.Fact, resolver extract.DomainResolver, d
 				to, bestLen = m.domain, len(m.segments)
 			}
 		}
+		if to == "" {
+			// Suffix fallback for languages where imports carry a path while
+			// module facts carry the bare package name (Go: import
+			// "app/internal/billing" vs package "billing"). Only applied
+			// when it resolves to exactly one domain.
+			suffixDomains := map[string]bool{}
+			for _, m := range modules {
+				if len(m.segments) > 0 && segmentsSuffix(m.segments, targetSegments) {
+					suffixDomains[m.domain] = true
+				}
+			}
+			if len(suffixDomains) == 1 {
+				for domain := range suffixDomains {
+					to = domain
+				}
+			}
+		}
 		if to == "" || to == from || !existing[from] || !existing[to] {
 			continue
 		}
@@ -288,6 +305,20 @@ func segmentsPrefix(prefix, full []string) bool {
 	}
 	for i, s := range prefix {
 		if full[i] != s {
+			return false
+		}
+	}
+	return true
+}
+
+// segmentsSuffix reports whether suffix is a segment-wise suffix of full.
+func segmentsSuffix(suffix, full []string) bool {
+	if len(suffix) > len(full) {
+		return false
+	}
+	offset := len(full) - len(suffix)
+	for i, s := range suffix {
+		if full[offset+i] != s {
 			return false
 		}
 	}
