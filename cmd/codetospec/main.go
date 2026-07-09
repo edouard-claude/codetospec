@@ -19,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"codetospec/internal/config"
+	"codetospec/internal/crosscheck"
 	"codetospec/internal/extract"
 	"codetospec/internal/graph"
 	"codetospec/internal/llm"
@@ -385,12 +386,57 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		return err
 	}
 
-	// BUILD + VERIFY + RENDER.
+	// BUILD + CROSSCHECK + VERIFY + RENDER.
 	sink.Emit(ui.PhaseChanged{Phase: "build"})
 	if err := st.Update(func(s *state.State) { s.Phase = "build" }); err != nil {
 		return err
 	}
 	nodes := graph.Build(facts, reduced, resolver)
+
+	var checkTally crosscheck.Tally
+	if cfg.Crosscheck {
+		sink.Emit(ui.PhaseChanged{Phase: "crosscheck"})
+		if err := st.Update(func(s *state.State) { s.Phase = "crosscheck" }); err != nil {
+			return err
+		}
+		ruleCount := 0
+		for _, n := range nodes {
+			if n.Type == "rule" {
+				ruleCount++
+			}
+		}
+		checkDone := 0
+		checker := &crosscheck.Checker{
+			LLM:     client,
+			Lang:    cfg.Lang,
+			Workers: cfg.Workers,
+			OutDir:  filepath.Join(cfg.Out, ".codetospec", "crosscheck"),
+			SrcRoot: cfg.Src,
+			OnUnit: func(v crosscheck.Verdict, usage llm.Usage) {
+				if err := st.Update(func(s *state.State) {
+					s.Tokens["crosscheck"].Prompt += usage.PromptTokens
+					s.Tokens["crosscheck"].Completion += usage.CompletionTokens
+				}); err != nil {
+					slog.Warn("state save failed", "err", err)
+				}
+				checkDone++
+				sink.Emit(ui.CrosscheckUnit{
+					RuleID:  v.RuleID,
+					Verdict: v.Verdict,
+					Done:    checkDone,
+					Total:   ruleCount,
+					Usage:   usage,
+				})
+			},
+		}
+		verdictsByRule, checkErr := checker.Run(ctx, nodes)
+		if checkErr != nil {
+			return checkErr
+		}
+		nodes = crosscheck.Annotate(nodes, verdictsByRule)
+		checkTally = crosscheck.Count(verdictsByRule)
+	}
+
 	violations := verify.Run(nodes, cfg.Src)
 	if len(violations) > 0 {
 		for _, v := range violations {
@@ -402,12 +448,17 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 
 	snapshot := st.Snapshot()
 	meta := render.Meta{
-		Coverage:       graph.ComputeCoverage(nodes),
-		ChunksFailed:   snapshot.ChunksFailed,
-		ChunksTotal:    snapshot.ChunksTotal,
-		DomainsFailed:  snapshot.DomainsFailed,
-		DomainsTotal:   snapshot.DomainsTotal,
-		FilesNoGrammar: noGrammar,
+		Coverage:              graph.ComputeCoverage(nodes),
+		ChunksFailed:          snapshot.ChunksFailed,
+		ChunksTotal:           snapshot.ChunksTotal,
+		DomainsFailed:         snapshot.DomainsFailed,
+		DomainsTotal:          snapshot.DomainsTotal,
+		FilesNoGrammar:        noGrammar,
+		Crosschecked:          cfg.Crosscheck,
+		CrosscheckSupported:   checkTally.Supported,
+		CrosscheckPartial:     checkTally.Partial,
+		CrosscheckUnsupported: checkTally.Unsupported,
+		CrosscheckFailed:      checkTally.Failed,
 	}
 	for name, status := range extractorStatus {
 		if status != "ok" {
@@ -565,7 +616,7 @@ func statsCommand(cfg *config.Config) int {
 	fmt.Printf("phase: %s (started %s)\n", s.Phase, s.StartedAt)
 	fmt.Printf("chunks: %d done, %d failed, %d total\n", s.ChunksDone, s.ChunksFailed, s.ChunksTotal)
 	fmt.Printf("domains: %d done, %d failed, %d total\n", s.DomainsDone, s.DomainsFailed, s.DomainsTotal)
-	for _, phase := range []string{"map", "reduce"} {
+	for _, phase := range []string{"map", "reduce", "crosscheck"} {
 		if t := s.Tokens[phase]; t != nil {
 			fmt.Printf("tokens %s: prompt %d, completion %d\n", phase, t.Prompt, t.Completion)
 		}

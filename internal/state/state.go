@@ -68,7 +68,7 @@ func Open(path, srcPath string) (*Store, error) {
 	if store.s.Tokens == nil {
 		store.s.Tokens = map[string]*PhaseTokens{}
 	}
-	for _, phase := range []string{"map", "reduce"} {
+	for _, phase := range []string{"map", "reduce", "crosscheck"} {
 		if store.s.Tokens[phase] == nil {
 			store.s.Tokens[phase] = &PhaseTokens{}
 		}

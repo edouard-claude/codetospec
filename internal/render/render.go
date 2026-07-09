@@ -27,6 +27,12 @@ type Meta struct {
 	DomainsTotal     int
 	FilesNoGrammar   []string
 	ExtractorsFailed []string
+	// Adversarial cross-check tally; only rendered when Crosschecked is true.
+	Crosschecked          bool
+	CrosscheckSupported   int
+	CrosscheckPartial     int
+	CrosscheckUnsupported int
+	CrosscheckFailed      int
 }
 
 // Write renders the whole graph into outDir: nodes/, graph.json, README.md
@@ -102,6 +108,9 @@ func Frontmatter(n graph.Node) string {
 	}
 	if v := n.Extra["acceptance"]; v != "" {
 		fmt.Fprintf(&b, "acceptance: %s\n", v)
+	}
+	if v := n.Extra["crosscheck"]; v != "" {
+		fmt.Fprintf(&b, "crosscheck: %s\n", v)
 	}
 	b.WriteString("---\n")
 	return b.String()
@@ -225,6 +234,14 @@ func readme(nodes []graph.Node, meta Meta) string {
 		sort.Strings(names)
 		fmt.Fprintf(&b, "- Extracteurs en échec : %s\n", strings.Join(names, ", "))
 	}
+	if meta.Crosschecked {
+		fmt.Fprintf(&b, "- Contre-vérification adversariale : %d supported, %d partial, %d unsupported",
+			meta.CrosscheckSupported, meta.CrosscheckPartial, meta.CrosscheckUnsupported)
+		if meta.CrosscheckFailed > 0 {
+			fmt.Fprintf(&b, ", %d en échec", meta.CrosscheckFailed)
+		}
+		b.WriteString("\n")
+	}
 
 	b.WriteString("\n## Domaines\n\n```mermaid\ngraph TD\n")
 	for _, n := range nodes {
@@ -292,6 +309,7 @@ type frontmatterDoc struct {
 	} `yaml:"edges"`
 	Ears       string `yaml:"ears"`
 	Acceptance *int   `yaml:"acceptance"`
+	Crosscheck string `yaml:"crosscheck"`
 }
 
 // ParseNode parses one rendered node file back into a Node (frontmatter
@@ -320,13 +338,16 @@ func ParseNode(content string) (graph.Node, error) {
 	for _, e := range doc.Edges {
 		n.Edges = append(n.Edges, graph.Edge{Type: e.Type, To: e.To})
 	}
-	if doc.Ears != "" || doc.Acceptance != nil {
+	if doc.Ears != "" || doc.Acceptance != nil || doc.Crosscheck != "" {
 		n.Extra = map[string]string{}
 		if doc.Ears != "" {
 			n.Extra["ears"] = doc.Ears
 		}
 		if doc.Acceptance != nil {
 			n.Extra["acceptance"] = strconv.Itoa(*doc.Acceptance)
+		}
+		if doc.Crosscheck != "" {
+			n.Extra["crosscheck"] = doc.Crosscheck
 		}
 	}
 	for line := range strings.SplitSeq(body, "\n") {

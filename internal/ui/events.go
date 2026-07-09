@@ -79,6 +79,15 @@ type ReduceUnit struct {
 	Usage  llm.Usage
 }
 
+// CrosscheckUnit reports one adversarially reviewed rule.
+type CrosscheckUnit struct {
+	RuleID  string
+	Verdict string // "supported" | "partial" | "unsupported" | "" when failed
+	Done    int
+	Total   int
+	Usage   llm.Usage
+}
+
 // LogLine forwards a log record (warnings surface in the TUI journal).
 type LogLine struct {
 	Level   slog.Level
@@ -151,6 +160,8 @@ func (Plain) Emit(event any) {
 		}
 	case ReduceUnit:
 		slog.Info("reduce progress", "domain", e.Domain, "done", e.Done, "total", e.Total)
+	case CrosscheckUnit:
+		slog.Info("crosscheck progress", "rule", e.RuleID, "verdict", e.Verdict, "done", e.Done, "total", e.Total)
 	case LogLine:
 		slog.Log(context.Background(), e.Level, e.Message)
 	case RunFinished:

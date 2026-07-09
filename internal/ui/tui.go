@@ -39,7 +39,7 @@ var (
 )
 
 // phase ordering for the sidebar ticks.
-var phaseOrder = []string{"extract", "map", "reduce", "build", "render"}
+var phaseOrder = []string{"extract", "map", "reduce", "build", "crosscheck", "render"}
 
 type tickMsg time.Time
 
@@ -76,6 +76,10 @@ type Model struct {
 	reduceRules                           int
 	lastDomain                            string
 	reduceUsage                           llm.Usage
+
+	checkDone, checkTotal                    int
+	checkSupported, checkPartial, checkOther int
+	checkUsage                               llm.Usage
 
 	journal  []string
 	finished bool
@@ -189,6 +193,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reduceUsage.Add(msg.Usage)
 		return m, nil
 
+	case CrosscheckUnit:
+		m.checkDone, m.checkTotal = msg.Done, msg.Total
+		switch msg.Verdict {
+		case "supported":
+			m.checkSupported++
+		case "partial":
+			m.checkPartial++
+		default:
+			m.checkOther++
+		}
+		m.checkUsage.Add(msg.Usage)
+		return m, nil
+
 	case LogLine:
 		m.appendJournal(msg.Message)
 		return m, nil
@@ -275,6 +292,20 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("en attente") + "\n")
 	}
 
+	// CROSSCHECK (only shown once the phase produced something)
+	if m.checkTotal > 0 {
+		b.WriteString(m.phaseIcon("crosscheck") + labelStyle.Render("check") + " ")
+		fmt.Fprintf(&b, "%d/%d règles contre-vérifiées · ", m.checkDone, m.checkTotal)
+		b.WriteString(okStyle.Render(fmt.Sprintf("%d supported", m.checkSupported)))
+		if m.checkPartial > 0 {
+			b.WriteString(dimStyle.Render(fmt.Sprintf(" · %d partial", m.checkPartial)))
+		}
+		if m.checkOther > 0 {
+			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d à revoir", m.checkOther)))
+		}
+		b.WriteString("\n")
+	}
+
 	// Journal
 	if len(m.journal) > 0 {
 		b.WriteString("\n")
@@ -288,7 +319,7 @@ func (m Model) View() string {
 	// Footer
 	footer := fmt.Sprintf("tokens map %s · reduce %s · total %s   %s   [q] quitter",
 		formatUsage(m.mapUsage), formatUsage(m.reduceUsage),
-		formatUsage(sumUsage(m.mapUsage, m.reduceUsage)), m.elapsed)
+		formatUsage(sumUsage(sumUsage(m.mapUsage, m.reduceUsage), m.checkUsage)), m.elapsed)
 	b.WriteString("\n" + footerStyle.Width(m.width).Render(footer))
 	return b.String()
 }

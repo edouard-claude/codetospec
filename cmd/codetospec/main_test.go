@@ -106,6 +106,12 @@ func mockLLM(t *testing.T) *httptest.Server {
 				return
 			}
 			content = string(data)
+		case strings.Contains(system, "adversarial code reviewer"):
+			if !strings.Contains(user, "CITED SOURCE") {
+				http.Error(w, "no cited source in crosscheck prompt", http.StatusBadRequest)
+				return
+			}
+			content = `{"verdict": "supported", "reason": "Les lignes citées implémentent la règle."}`
 		default:
 			http.Error(w, "unknown prompt", http.StatusBadRequest)
 			return
@@ -140,6 +146,7 @@ func e2eConfig(t *testing.T, serverURL, outDir string) *config.Config {
 		FactsFiles:     []string{filepath.Join(src, "fixture.facts.json")},
 		LogLevel:       "warn",
 		DomainStrategy: "auto",
+		Crosscheck:     true,
 	}
 }
 
@@ -186,6 +193,22 @@ func TestEndToEndRunOnFixture(t *testing.T) {
 	}
 	if !strings.Contains(string(readme), "```mermaid") || !strings.Contains(string(readme), "## Couverture") {
 		t.Error("README.md missing mermaid graph or coverage section")
+	}
+	if !strings.Contains(string(readme), "Contre-vérification adversariale") {
+		t.Error("README.md missing adversarial crosscheck tally")
+	}
+
+	// Every rule node must carry its crosscheck verdict in the frontmatter.
+	rulePaths, err := filepath.Glob(filepath.Join(outDir, "nodes", "rules", "*.md"))
+	if err != nil || len(rulePaths) == 0 {
+		t.Fatalf("no rule files: %v", err)
+	}
+	ruleData, err := os.ReadFile(rulePaths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(ruleData), "crosscheck: supported") {
+		t.Errorf("rule frontmatter missing crosscheck verdict:\n%s", ruleData)
 	}
 
 	// graph.json must parse and reference existing files.
