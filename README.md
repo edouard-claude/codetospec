@@ -40,6 +40,10 @@ edges:
   - {type: touches, to: entity.invoices}
 ears: event
 acceptance: 3
+nature: business          # business | presentation | technical
+origin: explicit          # explicit | implicit
+confidence: 0.90
+crosscheck: supported     # supported | partial | unsupported
 ---
 
 # Prorated billing on activation
@@ -67,6 +71,14 @@ the LLM inside a loop it does not control:
   facts; it never produces them.
 - **Everything is a citation.** Each rule points to exact `path:lines` in the
   source. `codetospec verify` re-checks a graph against the tree at any time.
+- **An adversarial reviewer refutes each rule** (`--crosscheck`): a
+  fresh-context LLM sees only the rule and the lines it cites, and votes
+  `supported | partial | unsupported`. A disputed rule is flagged, never
+  silently dropped.
+- **Rules are classified**, not just listed: `nature` (business /
+  presentation / technical) and `origin` (explicit / implicit) separate real
+  business rules from plumbing; `confidence` × `crosscheck` gives a triage
+  signal.
 
 ## Language-agnostic by construction
 
@@ -80,9 +92,10 @@ lives in three layers:
    Rust ship out of the box; unknown files fall back to line-window chunks.
 2. **External native extractors** (ecosystem semantics): standalone
    executables speaking a small JSON protocol, free to use the target
-   ecosystem's own tooling. A PHP extractor ships as the first example
-   (routes, schema tables, optional runtime introspection). Adding an
-   ecosystem means writing an executable, zero binary changes.
+   ecosystem's own tooling. Two ship today — PHP/Laravel (routes, schema
+   tables, optional runtime introspection) and Go (gin/echo/chi routes and
+   SQL tables via `go/packages`). Adding an ecosystem means writing an
+   executable, zero binary changes.
 3. **The LLM**: reads chunks directly, natively multi-language.
 
 Any OpenAI-compatible endpoint works: a self-hosted vLLM, DeepSeek, or any
@@ -93,7 +106,8 @@ variables.
 
 ```
 extract (layers 1+2) ──▶ chunk (AST) ──▶ map (LLM, parallel, per chunk)
-       ──▶ reduce (LLM, per domain) ──▶ build + verify + render (pure Go)
+       ──▶ reduce (LLM, per domain) ──▶ crosscheck (LLM, optional)
+       ──▶ build + verify + render (pure Go)
 ```
 
 - **map**: one call per chunk extracts candidate rules with citations.
@@ -135,9 +149,10 @@ bin/codetospec verify --src <repo> --out <graph>   # re-check citations, exit 1 
 bin/codetospec stats  --out <graph>                # phase counters and token costs
 ```
 
-Useful flags: `--workers N` (map parallelism), `--max-tokens N` (raise it if
-a large domain truncates its reduce output), `--lang fr|en` (requirements
-language), `--exclude 'vendor,node_modules,*.md,*.csv'` (directory names and
+Useful flags: `--crosscheck` (adversarial review pass), `--workers N` (map
+parallelism), `--max-tokens N` (raise it if a large domain truncates its
+reduce output), `--lang fr|en` (requirements language),
+`--exclude 'vendor,node_modules,*.md,*.csv'` (directory names and
 file globs), `--facts extra.facts.json` (inject facts from anywhere).
 
 ## Output
