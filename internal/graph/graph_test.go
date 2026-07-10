@@ -50,6 +50,9 @@ func fixtureReduced() []reducer.Output {
 			Entities:           []string{"entity.invoices"},
 			Endpoints:          []string{"endpoint.post-api-activate"},
 			AcceptanceCriteria: []string{"a", "b", "c"},
+			Nature:             "business",
+			Origin:             "explicit",
+			Confidence:         0.9,
 		}
 	}
 	return []reducer.Output{
@@ -133,6 +136,7 @@ func TestBuildDomainDependsOnGoStyleImports(t *testing.T) {
 			Slug: "r", Title: "T", EarsKind: "event", Requirement: "QUAND x, le systeme doit y.",
 			Citations:          []extract.Ref{{Path: "internal/" + domain + "/x.go", Lines: "1-2"}},
 			AcceptanceCriteria: []string{"a", "b"},
+			Nature:             "business", Origin: "explicit", Confidence: 0.9,
 		}}}
 	}
 	nodes := Build(facts, []reducer.Output{rule("billing"), rule("invoice")}, extract.DomainResolver{})

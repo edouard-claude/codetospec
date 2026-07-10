@@ -109,6 +109,15 @@ func Frontmatter(n graph.Node) string {
 	if v := n.Extra["acceptance"]; v != "" {
 		fmt.Fprintf(&b, "acceptance: %s\n", v)
 	}
+	if v := n.Extra["nature"]; v != "" {
+		fmt.Fprintf(&b, "nature: %s\n", v)
+	}
+	if v := n.Extra["origin"]; v != "" {
+		fmt.Fprintf(&b, "origin: %s\n", v)
+	}
+	if v := n.Extra["confidence"]; v != "" {
+		fmt.Fprintf(&b, "confidence: %s\n", v)
+	}
 	if v := n.Extra["crosscheck"]; v != "" {
 		fmt.Fprintf(&b, "crosscheck: %s\n", v)
 	}
@@ -198,6 +207,17 @@ func countByType(nodes []graph.Node) map[string]int {
 	return counts
 }
 
+// countByExtra tallies rule nodes by the value of one Extra key.
+func countByExtra(nodes []graph.Node, key string) map[string]int {
+	counts := make(map[string]int)
+	for _, n := range nodes {
+		if n.Type == "rule" && n.Extra[key] != "" {
+			counts[n.Extra[key]]++
+		}
+	}
+	return counts
+}
+
 func percent(part, total int) string {
 	if total == 0 {
 		return "n/a"
@@ -214,6 +234,16 @@ func readme(nodes []graph.Node, meta Meta) string {
 	fmt.Fprintf(&b, "- Entités : %d\n", counts["entity"])
 	fmt.Fprintf(&b, "- Endpoints : %d\n", counts["endpoint"])
 	fmt.Fprintf(&b, "- Règles : %d\n", counts["rule"])
+
+	byNature := countByExtra(nodes, "nature")
+	if total := byNature["business"] + byNature["presentation"] + byNature["technical"]; total > 0 {
+		fmt.Fprintf(&b, "  - métier : %d · présentation : %d · technique : %d\n",
+			byNature["business"], byNature["presentation"], byNature["technical"])
+	}
+	byOrigin := countByExtra(nodes, "origin")
+	if byOrigin["explicit"]+byOrigin["implicit"] > 0 {
+		fmt.Fprintf(&b, "  - explicites : %d · implicites : %d\n", byOrigin["explicit"], byOrigin["implicit"])
+	}
 
 	b.WriteString("\n## Couverture\n\n")
 	fmt.Fprintf(&b, "- Endpoints référencés par au moins une règle : %d/%d (%s)\n",
@@ -307,9 +337,12 @@ type frontmatterDoc struct {
 		Type string `yaml:"type"`
 		To   string `yaml:"to"`
 	} `yaml:"edges"`
-	Ears       string `yaml:"ears"`
-	Acceptance *int   `yaml:"acceptance"`
-	Crosscheck string `yaml:"crosscheck"`
+	Ears       string   `yaml:"ears"`
+	Acceptance *int     `yaml:"acceptance"`
+	Nature     string   `yaml:"nature"`
+	Origin     string   `yaml:"origin"`
+	Confidence *float64 `yaml:"confidence"`
+	Crosscheck string   `yaml:"crosscheck"`
 }
 
 // ParseNode parses one rendered node file back into a Node (frontmatter
@@ -338,17 +371,27 @@ func ParseNode(content string) (graph.Node, error) {
 	for _, e := range doc.Edges {
 		n.Edges = append(n.Edges, graph.Edge{Type: e.Type, To: e.To})
 	}
-	if doc.Ears != "" || doc.Acceptance != nil || doc.Crosscheck != "" {
-		n.Extra = map[string]string{}
-		if doc.Ears != "" {
-			n.Extra["ears"] = doc.Ears
-		}
-		if doc.Acceptance != nil {
-			n.Extra["acceptance"] = strconv.Itoa(*doc.Acceptance)
-		}
-		if doc.Crosscheck != "" {
-			n.Extra["crosscheck"] = doc.Crosscheck
-		}
+	extra := map[string]string{}
+	if doc.Ears != "" {
+		extra["ears"] = doc.Ears
+	}
+	if doc.Acceptance != nil {
+		extra["acceptance"] = strconv.Itoa(*doc.Acceptance)
+	}
+	if doc.Nature != "" {
+		extra["nature"] = doc.Nature
+	}
+	if doc.Origin != "" {
+		extra["origin"] = doc.Origin
+	}
+	if doc.Confidence != nil {
+		extra["confidence"] = strconv.FormatFloat(*doc.Confidence, 'f', 2, 64)
+	}
+	if doc.Crosscheck != "" {
+		extra["crosscheck"] = doc.Crosscheck
+	}
+	if len(extra) > 0 {
+		n.Extra = extra
 	}
 	for line := range strings.SplitSeq(body, "\n") {
 		if title, ok := strings.CutPrefix(line, "# "); ok {

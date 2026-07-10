@@ -313,7 +313,7 @@ func (m Model) View() string {
 		for i, l := range m.journal {
 			lines[i] = journalStyle.Render(truncateLine(l, m.width-6))
 		}
-		b.WriteString(sectionBorder.Width(m.width - 2).Render(strings.Join(lines, "\n")) + "\n")
+		b.WriteString(sectionBorder.Width(m.width-2).Render(strings.Join(lines, "\n")) + "\n")
 	}
 
 	// Footer

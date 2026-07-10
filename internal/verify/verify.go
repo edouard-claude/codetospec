@@ -106,9 +106,10 @@ func checkRoundTrip(n graph.Node) string {
 	if !reflect.DeepEqual(parsed.Edges, n.Edges) {
 		return "edges did not survive the round-trip"
 	}
-	if parsed.Extra["ears"] != n.Extra["ears"] || parsed.Extra["acceptance"] != n.Extra["acceptance"] ||
-		parsed.Extra["crosscheck"] != n.Extra["crosscheck"] {
-		return "ears/acceptance/crosscheck did not survive the round-trip"
+	for _, key := range []string{"ears", "acceptance", "nature", "origin", "confidence", "crosscheck"} {
+		if parsed.Extra[key] != n.Extra[key] {
+			return "extra field " + key + " did not survive the round-trip"
+		}
 	}
 	return ""
 }

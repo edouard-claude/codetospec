@@ -66,6 +66,8 @@ func mockLLM(t *testing.T) *httptest.Server {
 					"citations":   []any{map[string]any{"path": m[1], "lines": m[2] + "-" + m[3]}},
 					"entities":    listLine(user, "ALLOWED_ENTITIES: "),
 					"endpoints":   listLine(user, "ALLOWED_ENDPOINTS: "),
+					"nature":      "business",
+					"origin":      "explicit",
 					"confidence":  0.9,
 				}}
 			}
@@ -98,6 +100,7 @@ func mockLLM(t *testing.T) *httptest.Server {
 					"entities":            c.Entities,
 					"endpoints":           c.Endpoints,
 					"acceptance_criteria": []string{"Le calcul nominal est correct.", "Le cas limite est couvert."},
+					"nature":              "business", "origin": "explicit", "confidence": 0.9,
 				})
 			}
 			data, err := json.Marshal(map[string]any{"domain_summary": "Domaine consolidé.", "rules": rules})

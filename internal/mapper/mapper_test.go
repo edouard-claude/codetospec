@@ -46,7 +46,7 @@ func newMapper(t *testing.T, chat llm.Chatter) *Mapper {
 const validMapReply = `{"chunk_summary": "un calcul", "rules": [{"title": "T", "ears_kind": "event",
 "requirement": "QUAND x, le systeme doit y.",
 "citations": [{"path": "app/X.php", "lines": "12-15"}],
-"entities": ["entity.invoices"], "endpoints": [], "confidence": 0.9}]}`
+"entities": ["entity.invoices"], "endpoints": [], "nature": "business", "origin": "explicit", "confidence": 0.9}]}`
 
 func TestMapNominal(t *testing.T) {
 	calls := 0

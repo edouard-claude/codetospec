@@ -11,6 +11,10 @@ edges:
   - {type: exposed_by, to: endpoint.post-api-activate}
 ears: event
 acceptance: 3
+nature: business
+origin: explicit
+confidence: 0.90
+crosscheck: supported
 ---
 
 # Prorata à l'activation

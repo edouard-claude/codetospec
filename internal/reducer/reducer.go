@@ -28,14 +28,16 @@ Hard rules:
 - entities and endpoints MUST be subsets of the provided allowed lists.
 - Keep requirements in <LANG>, EARS patterns, one behavior per rule.
 - slug: lowercase ascii, words separated by "-", max 5 words, unique within the domain.
-- acceptance_criteria: 2 to 5 concrete, testable checks per rule, derived from the requirement, written in <LANG>.`
+- acceptance_criteria: 2 to 5 concrete, testable checks per rule, derived from the requirement, written in <LANG>.
+- nature ("business"|"presentation"|"technical") and origin ("explicit"|"implicit"): carry over from the merged candidates; when they disagree, pick the dominant one.
+- confidence: number in [0,1], your certainty in the consolidated rule (roughly the max confidence of the candidates you merged).`
 
 const userPromptFormat = `DOMAIN: %s
 ALLOWED_ENTITIES: %s
 ALLOWED_ENDPOINTS: %s
 
 OUTPUT JSON SCHEMA:
-{"domain_summary": string, "rules": [{"slug": string, "title": string, "ears_kind": string, "requirement": string, "rationale": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "acceptance_criteria": [string]}]}
+{"domain_summary": string, "rules": [{"slug": string, "title": string, "ears_kind": string, "requirement": string, "rationale": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "acceptance_criteria": [string], "nature": "business|presentation|technical", "origin": "explicit|implicit", "confidence": number}]}
 
 CANDIDATE_RULES:
 %s`
@@ -51,6 +53,9 @@ type Rule struct {
 	Entities           []string      `json:"entities"`
 	Endpoints          []string      `json:"endpoints"`
 	AcceptanceCriteria []string      `json:"acceptance_criteria"`
+	Nature             string        `json:"nature"`
+	Origin             string        `json:"origin"`
+	Confidence         float64       `json:"confidence"`
 }
 
 // Output is the persisted result of reducing one domain.
@@ -203,6 +208,15 @@ func validateReduceReply(reply string, allowedEntities, allowedEndpoints []strin
 		}
 		if bad := notSubset(rule.Endpoints, allowedEndpoints); bad != "" {
 			return payload, fmt.Errorf("rules[%d].endpoints contains %q which is not in ALLOWED_ENDPOINTS", i, bad)
+		}
+		if !mapper.Natures[rule.Nature] {
+			return payload, fmt.Errorf("rules[%d].nature %q is not one of business|presentation|technical", i, rule.Nature)
+		}
+		if !mapper.Origins[rule.Origin] {
+			return payload, fmt.Errorf("rules[%d].origin %q is not one of explicit|implicit", i, rule.Origin)
+		}
+		if rule.Confidence < 0 || rule.Confidence > 1 {
+			return payload, fmt.Errorf("rules[%d].confidence %v is outside [0,1]", i, rule.Confidence)
 		}
 	}
 	return payload, nil

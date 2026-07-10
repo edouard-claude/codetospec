@@ -200,6 +200,9 @@ func ruleAndDomainNodes(reduced []reducer.Output) (rules, domains []Node) {
 				Extra: map[string]string{
 					"ears":       rule.EarsKind,
 					"acceptance": strconv.Itoa(len(rule.AcceptanceCriteria)),
+					"nature":     rule.Nature,
+					"origin":     rule.Origin,
+					"confidence": strconv.FormatFloat(rule.Confidence, 'f', 2, 64),
 				},
 			})
 			fmt.Fprintf(&ruleList, "- [%s](../rules/%s.%s.md)\n", rule.Title, out.Domain, rule.Slug)

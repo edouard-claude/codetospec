@@ -6,6 +6,8 @@ Graphe de connaissances des règles métier, extrait du code source par codetosp
 - Entités : 1
 - Endpoints : 1
 - Règles : 1
+  - métier : 1 · présentation : 0 · technique : 0
+  - explicites : 1 · implicites : 0
 
 ## Couverture
 

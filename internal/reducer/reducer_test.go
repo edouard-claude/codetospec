@@ -45,7 +45,7 @@ const validReduceReply = `{"domain_summary": "Facturation.", "rules": [{"slug": 
 "rationale": "Vu dans le code.",
 "citations": [{"path": "app/X.php", "lines": "12-15"}],
 "entities": ["entity.invoices"], "endpoints": [],
-"acceptance_criteria": ["a", "b"]}]}`
+"acceptance_criteria": ["a", "b"], "nature": "business", "origin": "explicit", "confidence": 0.9}]}`
 
 func TestReduceNominal(t *testing.T) {
 	calls := 0
@@ -120,7 +120,7 @@ func TestReduceValidationRules(t *testing.T) {
 	duplicated := strings.Replace(validReduceReply, `"rules": [{`, `"rules": [{"slug": "prorata-activation",
 "title": "Dup", "ears_kind": "event", "requirement": "QUAND a, le systeme doit b.",
 "rationale": "", "citations": [{"path": "app/X.php", "lines": "12-15"}],
-"entities": [], "endpoints": [], "acceptance_criteria": ["a", "b"]}, {`, 1)
+"entities": [], "endpoints": [], "acceptance_criteria": ["a", "b"], "nature": "business", "origin": "explicit", "confidence": 0.8}, {`, 1)
 	payload, err := validateReduceReply(duplicated, entities, endpoints, allowed)
 	if err != nil {
 		t.Fatalf("duplicate slug should be repaired, got %v", err)

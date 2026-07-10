@@ -61,7 +61,7 @@ func testNodes() []graph.Node {
 				{Type: "touches", To: "entity.invoices"},
 				{Type: "exposed_by", To: "endpoint.post-api-activate"},
 			},
-			Extra: map[string]string{"ears": "event", "acceptance": "3"},
+			Extra: map[string]string{"ears": "event", "acceptance": "3", "nature": "business", "origin": "explicit", "confidence": "0.90", "crosscheck": "supported"},
 		},
 	}
 }

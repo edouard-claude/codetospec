@@ -42,6 +42,10 @@ Hard rules:
   unwanted: "SI <condition>, ALORS le systeme doit <response>."
   optional: "LA OU <feature>, le systeme doit <response>."
 - Focus on business behavior: validation, calculation, state transitions, side effects, authorization. Ignore framework plumbing.
+- Classify each rule:
+  - nature: "business" (domain behavior: validation, calculation, pricing, authorization), "presentation" (display, formatting, UI text, rendering), or "technical" (framework wiring, logging, serialization, infrastructure).
+  - origin: "explicit" (the behavior is directly coded, e.g. an if/throw) or "implicit" (it emerges from data flow or structure and is inferred).
+- confidence is your certainty in [0,1] that this is a real, correctly-cited rule.
 - If the chunk contains no business rule, return {"chunk_summary": "...", "rules": []}.`
 
 const userPromptFormat = `FILE: %s (lines %d-%d)
@@ -52,7 +56,7 @@ ALLOWED_ENTITIES: %s
 ALLOWED_ENDPOINTS: %s
 
 OUTPUT JSON SCHEMA:
-{"chunk_summary": string, "rules": [{"title": string, "ears_kind": "ubiquitous|event|state|unwanted|optional", "requirement": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "confidence": number}]}
+{"chunk_summary": string, "rules": [{"title": string, "ears_kind": "ubiquitous|event|state|unwanted|optional", "requirement": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "nature": "business|presentation|technical", "origin": "explicit|implicit", "confidence": number}]}
 
 CODE:
 %s`
@@ -73,8 +77,16 @@ type Rule struct {
 	Citations   []extract.Ref `json:"citations"`
 	Entities    []string      `json:"entities"`
 	Endpoints   []string      `json:"endpoints"`
+	Nature      string        `json:"nature"` // "business" | "presentation" | "technical"
+	Origin      string        `json:"origin"` // "explicit" | "implicit"
 	Confidence  float64       `json:"confidence"`
 }
+
+// Natures classifies what a rule describes.
+var Natures = map[string]bool{"business": true, "presentation": true, "technical": true}
+
+// Origins classifies how directly a rule is stated in the code.
+var Origins = map[string]bool{"explicit": true, "implicit": true}
 
 // Output is the persisted result of mapping one chunk.
 type Output struct {
@@ -268,6 +280,12 @@ func validateMapReply(reply string, chunk sitter.Chunk, allowedEntities, allowed
 		}
 		if bad := notSubset(rule.Endpoints, allowedEndpoints); bad != "" {
 			return payload, fmt.Errorf("rules[%d].endpoints contains %q which is not in ALLOWED_ENDPOINTS", i, bad)
+		}
+		if !Natures[rule.Nature] {
+			return payload, fmt.Errorf("rules[%d].nature %q is not one of business|presentation|technical", i, rule.Nature)
+		}
+		if !Origins[rule.Origin] {
+			return payload, fmt.Errorf("rules[%d].origin %q is not one of explicit|implicit", i, rule.Origin)
 		}
 		if rule.Confidence < 0 || rule.Confidence > 1 {
 			return payload, fmt.Errorf("rules[%d].confidence %v is outside [0,1]", i, rule.Confidence)
