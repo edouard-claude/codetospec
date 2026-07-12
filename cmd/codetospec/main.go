@@ -358,6 +358,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		OutDir:    filepath.Join(cfg.Out, ".codetospec", "reduce"),
 		Entities:  entities,
 		Endpoints: allEndpoints,
+		BatchSize: cfg.ReduceBatch,
 		OnUnit: func(out reducer.Output, usage llm.Usage) {
 			var done int
 			if err := st.Update(func(s *state.State) {

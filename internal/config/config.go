@@ -61,6 +61,7 @@ type Config struct {
 	DomainStrategy string
 	NoTUI          bool
 	Crosscheck     bool
+	ReduceBatch    int
 }
 
 // DefaultExclude lists the directories ignored by default.
@@ -99,6 +100,7 @@ func ParseRun(args []string) (*Config, error) {
 	fs.StringVar(&cfg.LogLevel, "log-level", "info", "debug, info, warn or error")
 	fs.BoolVar(&cfg.NoTUI, "no-tui", false, "disable the full-screen dashboard, log to stderr")
 	fs.BoolVar(&cfg.Crosscheck, "crosscheck", false, "adversarial review pass: a fresh-context LLM tries to refute each rule against its cited lines")
+	fs.IntVar(&cfg.ReduceBatch, "reduce-batch", 30, "max candidate rules per reduce call; larger domains are batched then merged")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}

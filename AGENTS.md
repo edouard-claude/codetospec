@@ -55,8 +55,13 @@ restéées sont réutilisées. `state.json` cumule les tokens entre runs.
 - Golden tests render : `go test ./internal/render -update` pour régénérer.
 - README tenu à jour à chaque feature livrée (concis).
 
-## Limite connue
+## Notes
 
-Le reduce envoie toutes les candidates d'un domaine en un appel : un domaine à
-plusieurs centaines de règles tronque son JSON et échoue (aucun `--max-tokens`
-ne sauve ça). Correctif prévu : découpage du reduce par lots.
+Le reduce découpe automatiquement les domaines de plus de `--reduce-batch`
+candidates (défaut 30) en lots fusionnés déterministiquement ; un lot qui
+tronque encore est re-découpé en deux et réessayé (halving rapide, sans
+corrections gaspillées) jusqu'à un plancher. Un gros domaine ne perd plus ses
+règles. La fusion inter-lots déduplique par requirement exact et renumérote
+les slugs en collision (pas de dédup sémantique fine entre lots : limite
+assumée). Attention : un domaine à plusieurs centaines de candidates (ex. des
+resolvers GraphQL) reste lent — souvent de la plomberie à exclure en amont.

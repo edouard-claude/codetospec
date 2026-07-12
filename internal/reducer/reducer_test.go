@@ -2,6 +2,8 @@ package reducer
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -140,6 +142,121 @@ func TestReduceValidationRules(t *testing.T) {
 
 	if _, err := validateReduceReply(validReduceReply, entities, endpoints, allowed); err != nil {
 		t.Errorf("valid reply rejected: %v", err)
+	}
+}
+
+func TestReduceBatchesLargeDomain(t *testing.T) {
+	// 130 candidates with BatchSize 50 -> 3 batches, each answered per-batch.
+	big := make([]mapper.Rule, 130)
+	for i := range big {
+		big[i] = mapper.Rule{
+			Title:       fmt.Sprintf("Règle %d", i),
+			EarsKind:    "event",
+			Requirement: fmt.Sprintf("QUAND cas %d, le systeme doit agir.", i),
+			Citations:   []extract.Ref{{Path: "app/X.php", Lines: fmt.Sprintf("%d-%d", i+1, i+2)}},
+		}
+	}
+
+	calls := 0
+	var batchSizes []int
+	r := newReducer(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		calls++
+		// Count how many candidates this batch carried.
+		_, candJSON, _ := strings.Cut(msgs[1].Content, "CANDIDATE_RULES:\n")
+		var cands []mapper.Rule
+		if err := json.Unmarshal([]byte(candJSON), &cands); err != nil {
+			t.Fatalf("batch %d: bad candidates JSON: %v", calls, err)
+		}
+		batchSizes = append(batchSizes, len(cands))
+		// Echo each candidate back as one consolidated rule.
+		rules := make([]map[string]any, len(cands))
+		for i, c := range cands {
+			rules[i] = map[string]any{
+				"slug": "regle", "title": c.Title, "ears_kind": "event",
+				"requirement": c.Requirement, "rationale": "r",
+				"citations": c.Citations, "entities": []string{}, "endpoints": []string{},
+				"acceptance_criteria": []string{"a", "b"},
+				"nature":              "business", "origin": "explicit", "confidence": 0.8,
+			}
+		}
+		out, _ := json.Marshal(map[string]any{"domain_summary": "S", "rules": rules})
+		return string(out), llm.Usage{}, nil
+	}))
+	r.BatchSize = 50
+
+	outputs, err := r.Run(context.Background(), map[string][]mapper.Rule{"billing": big})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3 batches", calls)
+	}
+	if batchSizes[0] != 50 || batchSizes[1] != 50 || batchSizes[2] != 30 {
+		t.Errorf("batch sizes = %v, want [50 50 30]", batchSizes)
+	}
+	out := outputs[0]
+	if out.Failed {
+		t.Fatalf("batched domain must not fail: %+v", out)
+	}
+	// Every merged rule must have a unique slug (renumbered on collision).
+	slugs := map[string]bool{}
+	for _, rule := range out.Rules {
+		if slugs[rule.Slug] {
+			t.Errorf("duplicate slug after merge: %q", rule.Slug)
+		}
+		slugs[rule.Slug] = true
+	}
+	if len(out.Rules) != 130 {
+		t.Errorf("merged rules = %d, want 130 distinct requirements", len(out.Rules))
+	}
+}
+
+func TestReduceBatchAdaptiveHalvingRecoversMostRules(t *testing.T) {
+	// 80 candidates, batchSize 40. Any batch containing candidate 0 (its
+	// requirement carries "QUAND cas 0,") always returns garbage, forcing the
+	// adaptive halving to isolate it down to reduceFloor. Everything else is
+	// recovered; only the floor-sized fragment holding candidate 0 is dropped.
+	big := make([]mapper.Rule, 80)
+	for i := range big {
+		big[i] = mapper.Rule{
+			Title: fmt.Sprintf("R%d", i), EarsKind: "event",
+			Requirement: fmt.Sprintf("QUAND cas %d, le systeme doit agir.", i),
+			Citations:   []extract.Ref{{Path: "app/X.php", Lines: fmt.Sprintf("%d-%d", i+1, i+2)}},
+		}
+	}
+	r := newReducer(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		_, candJSON, _ := strings.Cut(msgs[1].Content, "CANDIDATE_RULES:\n")
+		if strings.Contains(candJSON, "QUAND cas 0,") {
+			return "not json", llm.Usage{}, nil
+		}
+		var cands []mapper.Rule
+		if err := json.Unmarshal([]byte(candJSON), &cands); err != nil {
+			t.Fatalf("bad candidates JSON: %v", err)
+		}
+		rules := make([]map[string]any, len(cands))
+		for i, c := range cands {
+			rules[i] = map[string]any{
+				"slug": "r", "title": c.Title, "ears_kind": "event", "requirement": c.Requirement,
+				"rationale": "r", "citations": c.Citations, "entities": []string{}, "endpoints": []string{},
+				"acceptance_criteria": []string{"a", "b"}, "nature": "business", "origin": "explicit", "confidence": 0.8,
+			}
+		}
+		out, _ := json.Marshal(map[string]any{"domain_summary": "S", "rules": rules})
+		return string(out), llm.Usage{}, nil
+	}))
+	r.BatchSize = 40
+
+	outputs, err := r.Run(context.Background(), map[string][]mapper.Rule{"billing": big})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if outputs[0].Failed {
+		t.Fatalf("domain must survive: %+v", outputs[0])
+	}
+	// Only the ≤reduceFloor fragment containing candidate 0 is lost; the vast
+	// majority of rules is recovered by halving.
+	if got := len(outputs[0].Rules); got < 80-reduceFloor || got >= 80 {
+		t.Errorf("recovered %d rules, want between %d and 79", got, 80-reduceFloor)
 	}
 }
 

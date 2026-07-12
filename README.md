@@ -113,7 +113,9 @@ extract (layers 1+2) ──▶ chunk (AST) ──▶ map (LLM, parallel, per chu
 - **map**: one call per chunk extracts candidate rules with citations.
 - **reduce**: one call per domain deduplicates and consolidates candidates;
   citations must exist verbatim among the candidates — the model cannot
-  invent or alter them.
+  invent or alter them. A domain with more than `--reduce-batch` candidates
+  (default 30) is reduced in batches and merged; a batch that still truncates
+  is split in half and retried, so a large domain never loses its rules.
 - **build/verify/render**: nodes are assembled and cross-checked (unique
   ids, resolvable edges and citations, frontmatter round-trip). Nothing is
   written unless verification passes.

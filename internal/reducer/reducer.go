@@ -80,6 +80,7 @@ type Reducer struct {
 	OutDir    string   // <out>/.codetospec/reduce
 	Entities  []string // allowed entity ids
 	Endpoints []string // allowed endpoint ids
+	BatchSize int      // candidates per reduce call; 0 uses DefaultBatchSize
 	// OnUnit is called after each finished domain with its token usage.
 	OnUnit func(out Output, usage llm.Usage)
 }
@@ -113,7 +114,15 @@ func (r *Reducer) Run(ctx context.Context, candidates map[string][]mapper.Rule) 
 	return outputs, nil
 }
 
+// DefaultBatchSize caps how many candidate rules go into one reduce call.
+// Sized so a batch's consolidated output fits comfortably under a typical
+// max-tokens (a domain with more candidates is reduced in batches then
+// merged, so a huge domain never truncates its JSON and gets lost).
+const DefaultBatchSize = 30
+
 // reduceDomain reduces one domain, reusing a cached output when present.
+// Domains larger than the batch size are reduced in batches and merged
+// deterministically.
 func (r *Reducer) reduceDomain(ctx context.Context, domain string, rules []mapper.Rule) (Output, llm.Usage, error) {
 	outPath := filepath.Join(r.OutDir, domain+".json")
 	if data, err := os.ReadFile(outPath); err == nil {
@@ -124,35 +133,26 @@ func (r *Reducer) reduceDomain(ctx context.Context, domain string, rules []mappe
 		slog.Warn("corrupt reduce cache, re-reducing", "path", outPath)
 	}
 
-	candidateJSON, err := json.Marshal(rules)
-	if err != nil {
-		return Output{}, llm.Usage{}, fmt.Errorf("encode candidates: %w", err)
-	}
-	userPrompt := fmt.Sprintf(userPromptFormat,
-		domain, mustJSON(r.Entities), mustJSON(r.Endpoints), string(candidateJSON))
-	msgs := []llm.Message{
-		{Role: "system", Content: strings.ReplaceAll(systemPrompt, "<LANG>", mapper.LangName(r.Lang))},
-		{Role: "user", Content: userPrompt},
+	batchSize := r.BatchSize
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
 	}
 
-	allowedCitations := citationSet(rules)
+	var out Output
 	var usage llm.Usage
-	payload, err := llm.ChatJSON(ctx, r.LLM, msgs, 2, func(u llm.Usage) { usage.Add(u) },
-		func(reply string) (reducePayload, error) {
-			return validateReduceReply(reply, r.Entities, r.Endpoints, allowedCitations)
-		})
-
-	out := Output{Domain: domain}
-	switch {
-	case err == nil:
-		out.DomainSummary = payload.DomainSummary
-		out.Rules = payload.Rules
-	case errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded):
-		return Output{}, usage, err
-	default:
-		slog.Warn("domain failed", "domain", domain, "err", err)
-		out.Failed = true
-		out.Error = err.Error()
+	if len(rules) <= batchSize {
+		payload, batchUsage, err := r.reduceBatch(ctx, domain, rules, 2)
+		usage = batchUsage
+		out = outcomeFrom(domain, payload, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return Output{}, usage, err
+		}
+	} else {
+		var err error
+		out, usage, err = r.reduceInBatches(ctx, domain, rules, batchSize)
+		if err != nil {
+			return Output{}, usage, err
+		}
 	}
 
 	data, err := json.MarshalIndent(out, "", "  ")
@@ -163,6 +163,164 @@ func (r *Reducer) reduceDomain(ctx context.Context, domain string, rules []mappe
 		return Output{}, usage, fmt.Errorf("write reduce output: %w", err)
 	}
 	return out, usage, nil
+}
+
+// reduceBatch runs one reduce LLM call over a candidate set, allowing up to
+// maxRepairs correction rounds. In the adaptive path maxRepairs is 0: a
+// truncated batch cannot be fixed by resending at the same size — halving is
+// the recovery — so retries there would only waste calls.
+func (r *Reducer) reduceBatch(ctx context.Context, domain string, rules []mapper.Rule, maxRepairs int) (reducePayload, llm.Usage, error) {
+	candidateJSON, err := json.Marshal(rules)
+	if err != nil {
+		return reducePayload{}, llm.Usage{}, fmt.Errorf("encode candidates: %w", err)
+	}
+	userPrompt := fmt.Sprintf(userPromptFormat,
+		domain, mustJSON(r.Entities), mustJSON(r.Endpoints), string(candidateJSON))
+	msgs := []llm.Message{
+		{Role: "system", Content: strings.ReplaceAll(systemPrompt, "<LANG>", mapper.LangName(r.Lang))},
+		{Role: "user", Content: userPrompt},
+	}
+	allowedCitations := citationSet(rules)
+	var usage llm.Usage
+	payload, err := llm.ChatJSON(ctx, r.LLM, msgs, maxRepairs, func(u llm.Usage) { usage.Add(u) },
+		func(reply string) (reducePayload, error) {
+			return validateReduceReply(reply, r.Entities, r.Endpoints, allowedCitations)
+		})
+	return payload, usage, err
+}
+
+// reduceFloor is the smallest batch we still try to reduce; a batch this
+// small that still fails to produce valid JSON is genuinely unprocessable
+// and gets dropped rather than split further.
+const reduceFloor = 5
+
+// reduceInBatches reduces a large domain in fixed-size batches, then merges
+// the batch outputs deterministically (dedup by identical requirement,
+// slugs renumbered on collision). A batch that truncates its JSON is split
+// in half and retried down to reduceFloor, so growth in output size can
+// never lose a whole batch (let alone a domain).
+func (r *Reducer) reduceInBatches(ctx context.Context, domain string, rules []mapper.Rule, batchSize int) (Output, llm.Usage, error) {
+	var usage llm.Usage
+	var merged []Rule
+	summary := ""
+	dropped := 0
+	for i := 0; i < len(rules); i += batchSize {
+		end := min(i+batchSize, len(rules))
+		batchRules, batchSummary, err := r.reduceBatchAdaptive(ctx, domain, rules[i:end], &usage, &dropped)
+		if err != nil {
+			return Output{}, usage, err // cancellation only
+		}
+		if summary == "" {
+			summary = batchSummary
+		}
+		merged = append(merged, batchRules...)
+	}
+	slog.Info("reduced large domain in batches", "domain", domain,
+		"candidates", len(rules), "rules", len(merged), "dropped_candidates", dropped)
+
+	out := Output{Domain: domain}
+	if len(merged) == 0 {
+		out.Failed = true
+		out.Error = "every reduce batch failed"
+		return out, usage, nil
+	}
+	out.DomainSummary = summary
+	out.Rules = mergeBatchRules(merged)
+	return out, usage, nil
+}
+
+// reduceBatchAdaptive reduces one batch, halving and retrying on failure
+// until batches succeed or shrink to reduceFloor. Returns cancellation
+// errors; persistent small-batch failures are counted in *dropped, not
+// returned.
+func (r *Reducer) reduceBatchAdaptive(ctx context.Context, domain string, rules []mapper.Rule, usage *llm.Usage, dropped *int) ([]Rule, string, error) {
+	// Fail fast while we can still halve; allow real correction rounds only
+	// at the floor, where halving is no longer an option.
+	maxRepairs := 0
+	if len(rules) <= reduceFloor {
+		maxRepairs = 2
+	}
+	payload, batchUsage, err := r.reduceBatch(ctx, domain, rules, maxRepairs)
+	usage.Add(batchUsage)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, "", err
+	}
+	if err == nil {
+		return payload.Rules, payload.DomainSummary, nil
+	}
+	if len(rules) > reduceFloor {
+		mid := len(rules) / 2
+		left, leftSummary, err := r.reduceBatchAdaptive(ctx, domain, rules[:mid], usage, dropped)
+		if err != nil {
+			return nil, "", err
+		}
+		right, rightSummary, err := r.reduceBatchAdaptive(ctx, domain, rules[mid:], usage, dropped)
+		if err != nil {
+			return nil, "", err
+		}
+		summary := leftSummary
+		if summary == "" {
+			summary = rightSummary
+		}
+		return append(left, right...), summary, nil
+	}
+	*dropped += len(rules)
+	slog.Warn("dropping unprocessable reduce batch", "domain", domain, "candidates", len(rules), "err", err)
+	return nil, "", nil
+}
+
+// outcomeFrom turns a reduce payload/error into a domain Output.
+func outcomeFrom(domain string, payload reducePayload, err error) Output {
+	out := Output{Domain: domain}
+	if err != nil {
+		slog.Warn("domain failed", "domain", domain, "err", err)
+		out.Failed = true
+		out.Error = err.Error()
+		return out
+	}
+	out.DomainSummary = payload.DomainSummary
+	out.Rules = payload.Rules
+	return out
+}
+
+// mergeBatchRules deduplicates rules merged from several batches: identical
+// requirements collapse (unioning their citations), and colliding slugs are
+// renumbered so they stay unique within the domain.
+func mergeBatchRules(rules []Rule) []Rule {
+	byRequirement := make(map[string]int) // requirement -> index in out
+	slugs := make(map[string]bool)
+	var out []Rule
+	for _, rule := range rules {
+		if idx, ok := byRequirement[rule.Requirement]; ok {
+			out[idx].Citations = unionRefs(out[idx].Citations, rule.Citations)
+			continue
+		}
+		rule.Slug = uniqueSlug(normalizeSlug(rule.Slug), slugs)
+		slugs[rule.Slug] = true
+		byRequirement[rule.Requirement] = len(out)
+		out = append(out, rule)
+	}
+	return out
+}
+
+// unionRefs merges two citation slices, dropping duplicates, stably sorted.
+func unionRefs(a, b []extract.Ref) []extract.Ref {
+	seen := make(map[string]bool, len(a)+len(b))
+	var out []extract.Ref
+	for _, ref := range append(append([]extract.Ref(nil), a...), b...) {
+		key := ref.Path + "|" + ref.Lines
+		if !seen[key] {
+			seen[key] = true
+			out = append(out, ref)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Lines < out[j].Lines
+	})
+	return out
 }
 
 // validateReduceReply enforces the deterministic contract on a reduce reply:
