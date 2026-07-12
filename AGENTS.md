@@ -25,7 +25,10 @@ Pipeline : `extract → chunk → map → reduce → crosscheck → build → ve
   Ajouter un langage = grammaire + fichier query, zéro modif du cœur.
 - `internal/extract` — modèle Fact, fusion, protocole extracteurs externes.
 - `internal/{mapper,reducer,crosscheck}` — phases LLM, chacune valide
-  mécaniquement sa sortie (2 corrections max puis échec tracé).
+  mécaniquement sa sortie (2 corrections max puis échec tracé). Le crosscheck
+  (`--crosscheck`) réfute chaque règle ; avec `--repair` (+ index SCIP), une
+  règle rejetée re-cite le span exact d'un symbole précis, adopté seulement
+  s'il chevauche un vrai corps de symbole (grounding mécanique).
 - `internal/{graph,verify,render}` — assemblage déterministe, contrôles, écriture.
 - `cmd/codetospec/main.go` — séquence complète.
 

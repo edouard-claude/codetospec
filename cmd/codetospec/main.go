@@ -417,6 +417,10 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 			Workers: cfg.Workers,
 			OutDir:  filepath.Join(cfg.Out, ".codetospec", "crosscheck"),
 			SrcRoot: cfg.Src,
+			Repair:  cfg.Repair,
+			SymbolsFor: func(path string) []mapper.SymbolContext {
+				return symbolsByPath[path]
+			},
 			OnUnit: func(v crosscheck.Verdict, usage llm.Usage) {
 				if err := st.Update(func(s *state.State) {
 					s.Tokens["crosscheck"].Prompt += usage.PromptTokens
@@ -463,6 +467,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		CrosscheckSupported:   checkTally.Supported,
 		CrosscheckPartial:     checkTally.Partial,
 		CrosscheckUnsupported: checkTally.Unsupported,
+		CrosscheckRepaired:    checkTally.Repaired,
 		CrosscheckFailed:      checkTally.Failed,
 	}
 	for name, status := range extractorStatus {

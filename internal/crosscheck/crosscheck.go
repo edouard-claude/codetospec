@@ -34,6 +34,7 @@ const (
 	VerdictSupported   = "supported"
 	VerdictPartial     = "partial"
 	VerdictUnsupported = "unsupported"
+	VerdictRepaired    = "repaired" // citation was corrected to a grounded symbol span
 )
 
 var verdicts = map[string]bool{
@@ -69,18 +70,45 @@ const maxExcerptLines = 400
 
 // Verdict is the persisted result of cross-checking one rule.
 type Verdict struct {
-	RuleID    string `json:"rule_id"`
-	Verdict   string `json:"verdict"`
-	Reason    string `json:"reason"`
-	InputHash string `json:"input_hash"`
-	Failed    bool   `json:"failed,omitempty"`
-	Error     string `json:"error,omitempty"`
+	RuleID       string        `json:"rule_id"`
+	Verdict      string        `json:"verdict"`
+	Reason       string        `json:"reason"`
+	InputHash    string        `json:"input_hash"`
+	NewCitations []extract.Ref `json:"new_citations,omitempty"` // set when Verdict == "repaired"
+	Failed       bool          `json:"failed,omitempty"`
+	Error        string        `json:"error,omitempty"`
 }
 
 // verdictPayload mirrors the JSON schema requested from the LLM.
 type verdictPayload struct {
 	Verdict string `json:"verdict"`
 	Reason  string `json:"reason"`
+}
+
+const repairSystemPrompt = `You are fixing a business rule whose citation does not prove it. You receive the rule and the precise symbol definitions (with exact line spans) available in the files it currently cites. Another reviewer rejected the current citation.
+
+Hard rules:
+- Output ONLY a valid JSON object matching the schema. No markdown fences, no prose.
+- Pick the symbol whose body actually implements the rule and cite its EXACT line span (copy the lines shown). You may cite more than one symbol.
+- Only cite spans listed in AVAILABLE_SYMBOLS. Never invent a file or a range.
+- If no available symbol implements the rule, return {"citations": [], "reason": "..."}.
+- Write the reason in <LANG>: one concrete sentence.`
+
+const repairUserPromptFormat = `RULE: %s
+TITLE: %s
+REQUIREMENT (EARS): %s
+WHY THE CURRENT CITATION WAS REJECTED: %s
+
+AVAILABLE_SYMBOLS (cite only these exact spans):
+%s
+
+OUTPUT JSON SCHEMA:
+{"citations": [{"path": string, "lines": "A-B"}], "reason": string}`
+
+// repairPayload mirrors the repair JSON schema.
+type repairPayload struct {
+	Citations []extract.Ref `json:"citations"`
+	Reason    string        `json:"reason"`
 }
 
 // Checker drives the adversarial cross-check phase.
@@ -90,6 +118,12 @@ type Checker struct {
 	Workers int
 	OutDir  string // <out>/.codetospec/crosscheck
 	SrcRoot string
+	// Repair, when true, gives every unsupported/partial rule one chance to
+	// re-cite the exact span of a precise symbol that implements it.
+	Repair bool
+	// SymbolsFor returns precise symbol definitions for a file (from a SCIP
+	// index). Repair needs these as grounded citation targets.
+	SymbolsFor func(path string) []mapper.SymbolContext
 	// OnUnit is called after each finished rule (cached or live).
 	OnUnit func(v Verdict, usage llm.Usage)
 }
@@ -214,6 +248,20 @@ func (c *Checker) checkRule(ctx context.Context, rule graph.Node) (Verdict, llm.
 		v.Error = err.Error()
 	}
 
+	// Repair pass: a flagged rule gets one chance to re-cite the exact span
+	// of a precise symbol that implements it.
+	if c.Repair && (v.Verdict == VerdictUnsupported || v.Verdict == VerdictPartial) {
+		newCitations, repairUsage, repairErr := c.repairRule(ctx, rule, v.Reason)
+		usage.Add(repairUsage)
+		if errors.Is(repairErr, context.Canceled) || errors.Is(repairErr, context.DeadlineExceeded) {
+			return Verdict{}, usage, repairErr
+		}
+		if len(newCitations) > 0 {
+			v.Verdict = VerdictRepaired
+			v.NewCitations = newCitations
+		}
+	}
+
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return Verdict{}, usage, fmt.Errorf("encode verdict: %w", err)
@@ -222,6 +270,120 @@ func (c *Checker) checkRule(ctx context.Context, rule graph.Node) (Verdict, llm.
 		return Verdict{}, usage, fmt.Errorf("write verdict: %w", err)
 	}
 	return v, usage, nil
+}
+
+// repairRule asks the model to re-cite the exact span of a precise symbol
+// that implements the rule, then validates the proposed citations
+// deterministically: each must sit in a file the rule already cited and
+// overlap a real symbol body. Without precise symbols it does nothing.
+func (c *Checker) repairRule(ctx context.Context, rule graph.Node, reason string) ([]extract.Ref, llm.Usage, error) {
+	if c.SymbolsFor == nil {
+		return nil, llm.Usage{}, nil
+	}
+	// Symbols available in the files this rule already cites.
+	symbolsByPath := make(map[string][]mapper.SymbolContext)
+	for _, src := range rule.Sources {
+		if _, seen := symbolsByPath[src.Path]; seen {
+			continue
+		}
+		symbolsByPath[src.Path] = c.SymbolsFor(src.Path)
+	}
+	catalog := formatSymbolCatalog(symbolsByPath)
+	if catalog == "" {
+		return nil, llm.Usage{}, nil // nothing to ground against
+	}
+
+	userPrompt := fmt.Sprintf(repairUserPromptFormat,
+		rule.ID, rule.Title, requirementOf(rule.Body), reason, catalog)
+	msgs := []llm.Message{
+		{Role: "system", Content: strings.ReplaceAll(repairSystemPrompt, "<LANG>", mapper.LangName(c.Lang))},
+		{Role: "user", Content: userPrompt},
+	}
+
+	var usage llm.Usage
+	payload, err := llm.ChatJSON(ctx, c.LLM, msgs, 1, func(u llm.Usage) { usage.Add(u) },
+		func(reply string) (repairPayload, error) {
+			var p repairPayload
+			if unmarshalErr := json.Unmarshal([]byte(llm.StripFences(reply)), &p); unmarshalErr != nil {
+				return p, fmt.Errorf("invalid JSON: %v", unmarshalErr)
+			}
+			return p, nil
+		})
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, usage, err
+		}
+		return nil, usage, nil // a failed repair just leaves the rule flagged
+	}
+
+	valid := validateRepairCitations(payload.Citations, symbolsByPath)
+	if len(valid) == 0 {
+		return nil, usage, nil
+	}
+	return valid, usage, nil
+}
+
+// validateRepairCitations keeps only citations that land in an allowed file
+// and overlap a real symbol body — the mechanical grounding guarantee.
+func validateRepairCitations(citations []extract.Ref, symbolsByPath map[string][]mapper.SymbolContext) []extract.Ref {
+	var valid []extract.Ref
+	seen := make(map[string]bool)
+	for _, c := range citations {
+		symbols, ok := symbolsByPath[c.Path]
+		if !ok {
+			continue // a file the rule did not originally cite
+		}
+		a, b, err := extract.ParseLines(c.Lines)
+		if err != nil {
+			continue
+		}
+		grounded := false
+		for _, s := range symbols {
+			if a <= s.EndLine && b >= s.StartLine {
+				grounded = true
+				break
+			}
+		}
+		if !grounded {
+			continue
+		}
+		key := c.Path + "|" + c.Lines
+		if !seen[key] {
+			seen[key] = true
+			valid = append(valid, c)
+		}
+	}
+	return valid
+}
+
+// formatSymbolCatalog renders the symbols available per file as citation
+// targets for the repair prompt.
+func formatSymbolCatalog(symbolsByPath map[string][]mapper.SymbolContext) string {
+	paths := make([]string, 0, len(symbolsByPath))
+	for path, syms := range symbolsByPath {
+		if len(syms) > 0 {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	var b strings.Builder
+	for _, path := range paths {
+		syms := append([]mapper.SymbolContext(nil), symbolsByPath[path]...)
+		sort.SliceStable(syms, func(i, j int) bool { return syms[i].StartLine < syms[j].StartLine })
+		fmt.Fprintf(&b, "%s:\n", path)
+		for _, s := range syms {
+			kind := s.Kind
+			if kind == "" {
+				kind = "symbol"
+			}
+			fmt.Fprintf(&b, "  - %s (%s) lines %d-%d", s.Name, kind, s.StartLine, s.EndLine)
+			if s.Signature != "" {
+				fmt.Fprintf(&b, ": %s", s.Signature)
+			}
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // citedExcerpt reads the exact cited lines from the source tree, with
@@ -255,8 +417,9 @@ func (c *Checker) citedExcerpt(sources []extract.Ref) (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// Annotate writes verdicts into the rule nodes (Extra["crosscheck"]) so the
-// frontmatter and reports carry them. Failed checks are left unannotated.
+// Annotate writes verdicts into the rule nodes (Extra["crosscheck"]) and,
+// for repaired rules, replaces their citations with the grounded ones.
+// Failed checks are left unannotated.
 func Annotate(nodes []graph.Node, verdictsByRule map[string]Verdict) []graph.Node {
 	for i := range nodes {
 		v, ok := verdictsByRule[nodes[i].ID]
@@ -267,6 +430,9 @@ func Annotate(nodes []graph.Node, verdictsByRule map[string]Verdict) []graph.Nod
 			nodes[i].Extra = map[string]string{}
 		}
 		nodes[i].Extra["crosscheck"] = v.Verdict
+		if v.Verdict == VerdictRepaired && len(v.NewCitations) > 0 {
+			nodes[i].Sources = v.NewCitations
+		}
 	}
 	return nodes
 }
@@ -276,6 +442,7 @@ type Tally struct {
 	Supported   int
 	Partial     int
 	Unsupported int
+	Repaired    int
 	Failed      int
 }
 
@@ -292,6 +459,8 @@ func Count(verdictsByRule map[string]Verdict) Tally {
 			t.Partial++
 		case v.Verdict == VerdictUnsupported:
 			t.Unsupported++
+		case v.Verdict == VerdictRepaired:
+			t.Repaired++
 		}
 	}
 	return t

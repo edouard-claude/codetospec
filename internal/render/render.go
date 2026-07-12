@@ -32,6 +32,7 @@ type Meta struct {
 	CrosscheckSupported   int
 	CrosscheckPartial     int
 	CrosscheckUnsupported int
+	CrosscheckRepaired    int
 	CrosscheckFailed      int
 }
 
@@ -267,6 +268,9 @@ func readme(nodes []graph.Node, meta Meta) string {
 	if meta.Crosschecked {
 		fmt.Fprintf(&b, "- Contre-vérification adversariale : %d supported, %d partial, %d unsupported",
 			meta.CrosscheckSupported, meta.CrosscheckPartial, meta.CrosscheckUnsupported)
+		if meta.CrosscheckRepaired > 0 {
+			fmt.Fprintf(&b, ", %d réparés", meta.CrosscheckRepaired)
+		}
 		if meta.CrosscheckFailed > 0 {
 			fmt.Fprintf(&b, ", %d en échec", meta.CrosscheckFailed)
 		}

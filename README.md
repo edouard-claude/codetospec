@@ -75,6 +75,11 @@ the LLM inside a loop it does not control:
   fresh-context LLM sees only the rule and the lines it cites, and votes
   `supported | partial | unsupported`. A disputed rule is flagged, never
   silently dropped.
+- **Flagged rules are repaired, not just flagged** (`--repair`, needs a SCIP
+  index): a rule the reviewer rejected gets one chance to re-cite the exact
+  span of a precise symbol that implements it. The new citation is accepted
+  only if it mechanically overlaps a real symbol body — grounded by
+  construction.
 - **Rules are classified**, not just listed: `nature` (business /
   presentation / technical) and `origin` (explicit / implicit) separate real
   business rules from plumbing; `confidence` × `crosscheck` gives a triage
@@ -155,7 +160,8 @@ bin/codetospec verify --src <repo> --out <graph>   # re-check citations, exit 1 
 bin/codetospec stats  --out <graph>                # phase counters and token costs
 ```
 
-Useful flags: `--crosscheck` (adversarial review pass), `--workers N` (map
+Useful flags: `--crosscheck` (adversarial review pass), `--repair` (fix
+flagged citations, needs a SCIP index), `--workers N` (map
 parallelism), `--max-tokens N` (raise it if a large domain truncates its
 reduce output), `--lang fr|en` (requirements language),
 `--exclude 'vendor,node_modules,*.md,*.csv'` (directory names and

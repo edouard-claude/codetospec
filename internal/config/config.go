@@ -61,6 +61,7 @@ type Config struct {
 	DomainStrategy string
 	NoTUI          bool
 	Crosscheck     bool
+	Repair         bool
 	ReduceBatch    int
 }
 
@@ -100,6 +101,7 @@ func ParseRun(args []string) (*Config, error) {
 	fs.StringVar(&cfg.LogLevel, "log-level", "info", "debug, info, warn or error")
 	fs.BoolVar(&cfg.NoTUI, "no-tui", false, "disable the full-screen dashboard, log to stderr")
 	fs.BoolVar(&cfg.Crosscheck, "crosscheck", false, "adversarial review pass: a fresh-context LLM tries to refute each rule against its cited lines")
+	fs.BoolVar(&cfg.Repair, "repair", false, "repair pass (implies --crosscheck): a flagged rule re-cites the exact span of a precise symbol; needs a SCIP index")
 	fs.IntVar(&cfg.ReduceBatch, "reduce-batch", 30, "max candidate rules per reduce call; larger domains are batched then merged")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -107,6 +109,9 @@ func ParseRun(args []string) (*Config, error) {
 
 	if cfg.Src == "" || cfg.Out == "" {
 		return nil, errors.New("run requires --src and --out")
+	}
+	if cfg.Repair {
+		cfg.Crosscheck = true
 	}
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })

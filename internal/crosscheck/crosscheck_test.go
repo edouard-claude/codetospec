@@ -8,6 +8,7 @@ import (
 	"codetospec/internal/extract"
 	"codetospec/internal/graph"
 	"codetospec/internal/llm"
+	"codetospec/internal/mapper"
 )
 
 type chatFunc func(ctx context.Context, msgs []llm.Message) (string, llm.Usage, error)
@@ -140,6 +141,88 @@ func TestCrosscheckCacheByInputHash(t *testing.T) {
 	}
 	if !recalled || verdicts[changed.ID].Verdict != VerdictUnsupported {
 		t.Fatalf("changed rule should be re-checked, got %+v", verdicts[changed.ID])
+	}
+}
+
+func TestRepairRecitesToGroundedSymbol(t *testing.T) {
+	call := 0
+	c := newChecker(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		call++
+		if call == 1 { // adversarial verify -> unsupported
+			return `{"verdict": "unsupported", "reason": "Les lignes citées ne montrent aucune logique."}`, llm.Usage{}, nil
+		}
+		// repair call: must carry the symbol catalog; re-cite the symbol span.
+		user := msgs[1].Content
+		if !strings.Contains(user, "AVAILABLE_SYMBOLS") || !strings.Contains(user, "calculate (method) lines 12-24") {
+			t.Errorf("repair prompt missing symbol catalog:\n%s", user)
+		}
+		return `{"citations": [{"path": "app/Services/Billing/ProrataCalculator.php", "lines": "12-24"}], "reason": "corps de calculate"}`, llm.Usage{}, nil
+	}))
+	c.Repair = true
+	c.SymbolsFor = func(path string) []mapper.SymbolContext {
+		if path != "app/Services/Billing/ProrataCalculator.php" {
+			return nil
+		}
+		return []mapper.SymbolContext{{Name: "calculate", StartLine: 12, EndLine: 24, Kind: "method", Signature: "func calculate()"}}
+	}
+
+	verdicts, err := c.Run(context.Background(), []graph.Node{ruleNode()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	v := verdicts["rule.services.prorata-activation"]
+	if v.Verdict != VerdictRepaired {
+		t.Fatalf("verdict = %q, want repaired", v.Verdict)
+	}
+	if len(v.NewCitations) != 1 || v.NewCitations[0].Lines != "12-24" {
+		t.Fatalf("new citations = %+v, want the symbol span 12-24", v.NewCitations)
+	}
+}
+
+func TestRepairRejectsUngroundedCitation(t *testing.T) {
+	call := 0
+	c := newChecker(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		call++
+		if call == 1 {
+			return `{"verdict": "unsupported", "reason": "rien"}`, llm.Usage{}, nil
+		}
+		// The model cites lines outside any symbol body -> must be rejected.
+		return `{"citations": [{"path": "app/Services/Billing/ProrataCalculator.php", "lines": "1-3"}], "reason": "x"}`, llm.Usage{}, nil
+	}))
+	c.Repair = true
+	c.SymbolsFor = func(string) []mapper.SymbolContext {
+		return []mapper.SymbolContext{{Name: "calculate", StartLine: 12, EndLine: 24}}
+	}
+
+	verdicts, err := c.Run(context.Background(), []graph.Node{ruleNode()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	v := verdicts["rule.services.prorata-activation"]
+	if v.Verdict != VerdictUnsupported {
+		t.Fatalf("ungrounded citation must not repair; verdict = %q", v.Verdict)
+	}
+	if len(v.NewCitations) != 0 {
+		t.Errorf("no citations should be adopted, got %+v", v.NewCitations)
+	}
+}
+
+func TestRepairNoopWithoutSymbols(t *testing.T) {
+	call := 0
+	c := newChecker(t, chatFunc(func(context.Context, []llm.Message) (string, llm.Usage, error) {
+		call++
+		return `{"verdict": "unsupported", "reason": "rien"}`, llm.Usage{}, nil
+	}))
+	c.Repair = true // but SymbolsFor is nil -> repair is skipped
+	verdicts, err := c.Run(context.Background(), []graph.Node{ruleNode()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if call != 1 {
+		t.Fatalf("without symbols, no repair call should happen; calls = %d", call)
+	}
+	if verdicts["rule.services.prorata-activation"].Verdict != VerdictUnsupported {
+		t.Fatal("verdict should stay unsupported")
 	}
 }
 
