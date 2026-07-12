@@ -20,7 +20,7 @@ make run-fixture                               # run mocké sur testdata/fixture
 
 ## Architecture
 
-Pipeline : `extract → chunk → map → reduce → crosscheck → build → verify → render`.
+Pipeline : `extract → chunk → map → reduce → crosscheck(+repair) → build → digest → verify → render`.
 - `internal/sitter` — tree-sitter, une grammaire + un `.scm` par langage.
   Ajouter un langage = grammaire + fichier query, zéro modif du cœur.
 - `internal/extract` — modèle Fact, fusion, protocole extracteurs externes.
@@ -54,7 +54,12 @@ hors de ce jeu. Le convertisseur SCIP émet des facts `symbol` avec
 
 Reprise = existence de ces fichiers. Pour rejouer une phase, **purger son
 cache** (`rm -rf .codetospec/reduce`) puis relancer ; les phases amont
-restéées sont réutilisées. `state.json` cumule les tokens entre runs.
+restantes sont réutilisées. `state.json` cumule les tokens entre runs.
+
+Gotcha : map (clé = hash contenu) et crosscheck (clé = hash règle+lignes)
+sont *content-aware* — ils se refont si le code change. Le **reduce** est
+indexé par nom de domaine seul : après une édition du code source, purger
+`.codetospec/reduce` à la main, sinon les sorties reduce restent périmées.
 
 ## Conventions
 
