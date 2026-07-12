@@ -1,0 +1,62 @@
+# codetospec — guide agent
+
+Binaire Go qui lit un dépôt et produit un graphe markdown de règles métier
+(EARS), citées ligne à ligne et vérifiées. Pour le quoi/pourquoi, voir
+`README.md`. Ici : comment travailler dans le repo.
+
+## Commandes
+
+```sh
+go build -o bin/codetospec ./cmd/codetospec   # TOUJOURS rebuild avant un run réel
+make test                                      # go vet ./... && go test ./...
+make run-fixture                               # run mocké sur testdata/fixture
+```
+
+- **Rebuild `bin/codetospec` après toute modif de code avant de le lancer** —
+  un binaire périmé produit un run faux silencieusement (déjà arrivé).
+- CGO obligatoire (tree-sitter) : `CGO_ENABLED=1`, toolchain C requise.
+- `go test ./...` tourne sans réseau ni PHP. Tests taggés `phplocal` pour
+  l'extracteur PHP (skip si `php` absent).
+
+## Architecture
+
+Pipeline : `extract → chunk → map → reduce → crosscheck → build → verify → render`.
+- `internal/sitter` — tree-sitter, une grammaire + un `.scm` par langage.
+  Ajouter un langage = grammaire + fichier query, zéro modif du cœur.
+- `internal/extract` — modèle Fact, fusion, protocole extracteurs externes.
+- `internal/{mapper,reducer,crosscheck}` — phases LLM, chacune valide
+  mécaniquement sa sortie (2 corrections max puis échec tracé).
+- `internal/{graph,verify,render}` — assemblage déterministe, contrôles, écriture.
+- `cmd/codetospec/main.go` — séquence complète.
+
+## Extracteurs = modules Go SÉPARÉS
+
+`extractors/php/` (composer) et `extractors/go/` (`go.mod` propre, dépend de
+`golang.org/x/tools`) **ne sont pas** construits par `go build ./...` depuis la
+racine. Les tester/builder depuis leur dossier. Raison : le module principal a
+un jeu de dépendances verrouillé (yaml, tree-sitter, charm) — les extracteurs
+vivent hors de ce jeu.
+
+## Cache & reprise (`<out>/.codetospec/`)
+
+- `map/<chunkID>.json` — clé = hash du contenu du chunk.
+- `reduce/<domain>.json` — clé = domaine.
+- `crosscheck/<ruleID>.json` — clé = hash (règle + lignes citées).
+
+Reprise = existence de ces fichiers. Pour rejouer une phase, **purger son
+cache** (`rm -rf .codetospec/reduce`) puis relancer ; les phases amont
+restéées sont réutilisées. `state.json` cumule les tokens entre runs.
+
+## Conventions
+
+- Sortie déterministe : tris stables partout, deux runs cache chaud =
+  identiques octet pour octet. Ne jamais introduire d'ordre non déterministe.
+- Code/commentaires/identifiants en **anglais** ; comms utilisateur en français.
+- Golden tests render : `go test ./internal/render -update` pour régénérer.
+- README tenu à jour à chaque feature livrée (concis).
+
+## Limite connue
+
+Le reduce envoie toutes les candidates d'un domaine en un appel : un domaine à
+plusieurs centaines de règles tronque son JSON et échoue (aucun `--max-tokens`
+ne sauve ça). Correctif prévu : découpage du reduce par lots.
