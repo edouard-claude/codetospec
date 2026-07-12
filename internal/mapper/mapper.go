@@ -34,6 +34,7 @@ const systemPrompt = `You are a senior software archaeologist. You read legacy s
 Hard rules:
 - Output ONLY a valid JSON object matching the schema provided by the user. No markdown fences, no prose.
 - Every rule MUST cite one or more exact line ranges inside the provided range. Never cite outside it.
+- When PRECISE_SYMBOLS is present, cite the exact line span of the symbol whose logic a rule describes; do not cite blank lines, import blocks or type declarations that carry no behavior.
 - entities MUST be a subset of ALLOWED_ENTITIES. endpoints MUST be a subset of ALLOWED_ENDPOINTS. When unsure, use [].
 - Write the requirement in <LANG> using one EARS pattern:
   ubiquitous: "Le systeme doit <response>."
@@ -54,7 +55,7 @@ NAMESPACE: %s
 DOMAIN: %s
 ALLOWED_ENTITIES: %s
 ALLOWED_ENDPOINTS: %s
-
+%s
 OUTPUT JSON SCHEMA:
 {"chunk_summary": string, "rules": [{"title": string, "ears_kind": "ubiquitous|event|state|unwanted|optional", "requirement": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "nature": "business|presentation|technical", "origin": "explicit|implicit", "confidence": number}]}
 
@@ -107,6 +108,16 @@ type mapPayload struct {
 	Rules        []Rule `json:"rules"`
 }
 
+// SymbolContext is a precisely-located symbol definition (from a SCIP index)
+// injected into a chunk's prompt so the model cites real spans, not guesses.
+type SymbolContext struct {
+	Name      string
+	StartLine int
+	EndLine   int
+	Kind      string
+	Signature string
+}
+
 // Mapper drives the map phase.
 type Mapper struct {
 	LLM          llm.Chatter
@@ -115,6 +126,9 @@ type Mapper struct {
 	OutDir       string   // <out>/.codetospec/map
 	Entities     []string // allowed entity ids, sorted
 	EndpointsFor func(path string) []string
+	// SymbolsFor returns the precise symbol definitions known for a file
+	// (empty when no SCIP index was provided). Optional.
+	SymbolsFor func(path string) []SymbolContext
 	// OnUnit is called after each finished unit (cached or live) with the
 	// usage consumed by that unit; callers persist state there.
 	OnUnit func(out Output, usage llm.Usage)
@@ -208,6 +222,7 @@ func (m *Mapper) mapChunk(ctx context.Context, chunk sitter.Chunk) (Output, llm.
 		chunk.Path, chunk.StartLine, chunk.EndLine,
 		chunk.Language, namespace, chunk.Domain,
 		mustJSON(m.Entities), mustJSON(allowedEndpoints),
+		m.symbolsSection(chunk),
 		chunk.Content,
 	)
 	msgs := []llm.Message{
@@ -248,6 +263,39 @@ func (m *Mapper) mapChunk(ctx context.Context, chunk sitter.Chunk) (Output, llm.
 		return Output{}, usage, fmt.Errorf("write map output: %w", err)
 	}
 	return out, usage, nil
+}
+
+// symbolsSection renders the precise symbol definitions overlapping a chunk,
+// so the model cites their exact spans instead of guessing. Returns "" when
+// no SCIP index is available.
+func (m *Mapper) symbolsSection(chunk sitter.Chunk) string {
+	if m.SymbolsFor == nil {
+		return ""
+	}
+	var relevant []SymbolContext
+	for _, s := range m.SymbolsFor(chunk.Path) {
+		if s.StartLine <= chunk.EndLine && s.EndLine >= chunk.StartLine {
+			relevant = append(relevant, s)
+		}
+	}
+	if len(relevant) == 0 {
+		return ""
+	}
+	sort.SliceStable(relevant, func(i, j int) bool { return relevant[i].StartLine < relevant[j].StartLine })
+	var b strings.Builder
+	b.WriteString("\nPRECISE_SYMBOLS (exact definitions resolved by an indexer; cite these line spans, never guess):\n")
+	for _, s := range relevant {
+		kind := s.Kind
+		if kind == "" {
+			kind = "symbol"
+		}
+		fmt.Fprintf(&b, "- %s (%s) lines %d-%d", s.Name, kind, s.StartLine, s.EndLine)
+		if s.Signature != "" {
+			fmt.Fprintf(&b, ": %s", s.Signature)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 // validateMapReply enforces the deterministic contract on one map reply.

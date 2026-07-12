@@ -284,6 +284,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 	sink.Emit(ui.Chunked{Chunks: len(chunks)})
 
 	entities, endpointsByPath := allowedLists(facts)
+	symbolsByPath := preciseSymbols(facts)
 	client := llm.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.MaxTokens)
 
 	// MAP.
@@ -304,6 +305,9 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		Entities: entities,
 		EndpointsFor: func(path string) []string {
 			return endpointsByPath[path]
+		},
+		SymbolsFor: func(path string) []mapper.SymbolContext {
+			return symbolsByPath[path]
 		},
 		OnUnit: func(out mapper.Output, usage llm.Usage) {
 			var done int
@@ -555,6 +559,30 @@ func allowedLists(facts []extract.Fact) (entities []string, endpointsByPath map[
 		endpointsByPath[path] = dedup(endpointsByPath[path])
 	}
 	return entities, endpointsByPath
+}
+
+// preciseSymbols groups indexer-resolved symbol definitions (attr
+// precise=true, e.g. from the SCIP converter) by file, for injection into
+// the map prompt as citation anchors.
+func preciseSymbols(facts []extract.Fact) map[string][]mapper.SymbolContext {
+	byPath := make(map[string][]mapper.SymbolContext)
+	for _, f := range facts {
+		if f.Kind != "symbol" || f.Attrs["precise"] != "true" {
+			continue
+		}
+		start, end, err := extract.ParseLines(f.Source.Lines)
+		if err != nil {
+			continue
+		}
+		byPath[f.Source.Path] = append(byPath[f.Source.Path], mapper.SymbolContext{
+			Name:      f.Attrs["name"],
+			StartLine: start,
+			EndLine:   end,
+			Kind:      f.Attrs["kind"],
+			Signature: f.Attrs["signature"],
+		})
+	}
+	return byPath
 }
 
 func allEndpointIDs(facts []extract.Fact) []string {

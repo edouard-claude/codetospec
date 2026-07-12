@@ -31,11 +31,13 @@ Pipeline : `extract → chunk → map → reduce → crosscheck → build → ve
 
 ## Extracteurs = modules Go SÉPARÉS
 
-`extractors/php/` (composer) et `extractors/go/` (`go.mod` propre, dépend de
-`golang.org/x/tools`) **ne sont pas** construits par `go build ./...` depuis la
-racine. Les tester/builder depuis leur dossier. Raison : le module principal a
-un jeu de dépendances verrouillé (yaml, tree-sitter, charm) — les extracteurs
-vivent hors de ce jeu.
+`extractors/php/` (composer), `extractors/go/` (`go.mod` propre, dépend de
+`golang.org/x/tools`) et `extractors/scip/` (dépend de `github.com/scip-code/scip`
++ protobuf) **ne sont pas** construits par `go build ./...` depuis la racine.
+Les tester/builder depuis leur dossier. Raison : le module principal a un jeu
+de dépendances verrouillé (yaml, tree-sitter, charm) — les extracteurs vivent
+hors de ce jeu. Le convertisseur SCIP émet des facts `symbol` avec
+`precise: true` que le map injecte comme ancres de citation.
 
 ## Cache & reprise (`<out>/.codetospec/`)
 

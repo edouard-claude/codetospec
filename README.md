@@ -92,9 +92,10 @@ lives in three layers:
    Rust ship out of the box; unknown files fall back to line-window chunks.
 2. **External native extractors** (ecosystem semantics): standalone
    executables speaking a small JSON protocol, free to use the target
-   ecosystem's own tooling. Two ship today — PHP/Laravel (routes, schema
-   tables, optional runtime introspection) and Go (gin/echo/chi routes and
-   SQL tables via `go/packages`). Adding an ecosystem means writing an
+   ecosystem's own tooling. Three ship today — PHP/Laravel (routes, schema
+   tables, optional runtime introspection), Go (gin/echo/chi routes and SQL
+   tables via `go/packages`), and a SCIP converter that turns any indexer's
+   output into precise symbol facts. Adding an ecosystem means writing an
    executable, zero binary changes.
 3. **The LLM**: reads chunks directly, natively multi-language.
 
@@ -110,7 +111,10 @@ extract (layers 1+2) ──▶ chunk (AST) ──▶ map (LLM, parallel, per chu
        ──▶ build + verify + render (pure Go)
 ```
 
-- **map**: one call per chunk extracts candidate rules with citations.
+- **map**: one call per chunk extracts candidate rules with citations. When
+  a SCIP index is supplied (via the SCIP converter), each chunk's prompt is
+  grounded with the exact signatures and line spans of the symbols it
+  contains, so the model cites real code spans instead of guessing.
 - **reduce**: one call per domain deduplicates and consolidates candidates;
   citations must exist verbatim among the candidates — the model cannot
   invent or alter them. A domain with more than `--reduce-batch` candidates

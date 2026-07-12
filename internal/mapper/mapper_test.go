@@ -144,6 +144,48 @@ func TestMapResumeSkipsCachedChunks(t *testing.T) {
 	}
 }
 
+func TestMapInjectsPreciseSymbols(t *testing.T) {
+	m := newMapper(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		user := msgs[1].Content
+		if !strings.Contains(user, "PRECISE_SYMBOLS") {
+			t.Errorf("prompt missing PRECISE_SYMBOLS section:\n%s", user)
+		}
+		// The overlapping symbol is present with its span and signature.
+		if !strings.Contains(user, "calculate (method) lines 12-18: func calculate() float64") {
+			t.Errorf("prompt missing overlapping symbol:\n%s", user)
+		}
+		// A symbol outside the chunk range must not be injected.
+		if strings.Contains(user, "unrelated") {
+			t.Errorf("prompt injected a non-overlapping symbol:\n%s", user)
+		}
+		return validMapReply, llm.Usage{}, nil
+	}))
+	m.SymbolsFor = func(path string) []SymbolContext {
+		if path != "app/X.php" {
+			return nil
+		}
+		return []SymbolContext{
+			{Name: "calculate", StartLine: 12, EndLine: 18, Kind: "method", Signature: "func calculate() float64"},
+			{Name: "unrelated", StartLine: 100, EndLine: 120, Kind: "method"},
+		}
+	}
+	if _, err := m.Run(context.Background(), []sitter.Chunk{testChunk()}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
+func TestMapNoSymbolsSectionWhenAbsent(t *testing.T) {
+	m := newMapper(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		if strings.Contains(msgs[1].Content, "PRECISE_SYMBOLS") {
+			t.Error("PRECISE_SYMBOLS must be absent when no SCIP index is provided")
+		}
+		return validMapReply, llm.Usage{}, nil
+	}))
+	if _, err := m.Run(context.Background(), []sitter.Chunk{testChunk()}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
 func TestMapValidationRejectsBadValues(t *testing.T) {
 	chunk := testChunk()
 	cases := map[string]string{
