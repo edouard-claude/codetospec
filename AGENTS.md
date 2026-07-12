@@ -30,6 +30,10 @@ Pipeline : `extract → chunk → map → reduce → crosscheck → build → ve
   règle rejetée re-cite le span exact d'un symbole précis, adopté seulement
   s'il chevauche un vrai corps de symbole (grounding mécanique).
 - `internal/{graph,verify,render}` — assemblage déterministe, contrôles, écriture.
+- `internal/drift` — digest du code cité par règle (frontmatter `digest:`) ;
+  commande `drift` = re-hache et signale les règles périmées (déterministe).
+- `internal/consistency` — détection de règles quasi-doublons (Jaccard sur
+  les exigences), listées dans le README de sortie.
 - `cmd/codetospec/main.go` — séquence complète.
 
 ## Extracteurs = modules Go SÉPARÉS

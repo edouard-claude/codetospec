@@ -14,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"codetospec/internal/consistency"
 	"codetospec/internal/extract"
 	"codetospec/internal/graph"
 )
@@ -34,6 +35,8 @@ type Meta struct {
 	CrosscheckUnsupported int
 	CrosscheckRepaired    int
 	CrosscheckFailed      int
+	// Near-duplicate rule pairs (deterministic consistency check).
+	DuplicatePairs []consistency.DuplicatePair
 }
 
 // Write renders the whole graph into outDir: nodes/, graph.json, README.md
@@ -121,6 +124,9 @@ func Frontmatter(n graph.Node) string {
 	}
 	if v := n.Extra["crosscheck"]; v != "" {
 		fmt.Fprintf(&b, "crosscheck: %s\n", v)
+	}
+	if v := n.Extra["digest"]; v != "" {
+		fmt.Fprintf(&b, "digest: %s\n", v)
 	}
 	b.WriteString("---\n")
 	return b.String()
@@ -277,6 +283,21 @@ func readme(nodes []graph.Node, meta Meta) string {
 		b.WriteString("\n")
 	}
 
+	if len(meta.DuplicatePairs) > 0 {
+		b.WriteString("\n## Doublons candidats\n\n")
+		fmt.Fprintf(&b, "%d paires de règles à l'exigence quasi identique (à réconcilier) :\n\n", len(meta.DuplicatePairs))
+		shown := meta.DuplicatePairs
+		if len(shown) > 20 {
+			shown = shown[:20]
+		}
+		for _, p := range shown {
+			fmt.Fprintf(&b, "- `%s` ↔ `%s` (%.0f%%)\n", p.A, p.B, p.Similarity*100)
+		}
+		if len(meta.DuplicatePairs) > len(shown) {
+			fmt.Fprintf(&b, "- … et %d autres\n", len(meta.DuplicatePairs)-len(shown))
+		}
+	}
+
 	b.WriteString("\n## Domaines\n\n```mermaid\ngraph TD\n")
 	for _, n := range nodes {
 		if n.Type == "domain" {
@@ -347,6 +368,7 @@ type frontmatterDoc struct {
 	Origin     string   `yaml:"origin"`
 	Confidence *float64 `yaml:"confidence"`
 	Crosscheck string   `yaml:"crosscheck"`
+	Digest     string   `yaml:"digest"`
 }
 
 // ParseNode parses one rendered node file back into a Node (frontmatter
@@ -393,6 +415,9 @@ func ParseNode(content string) (graph.Node, error) {
 	}
 	if doc.Crosscheck != "" {
 		extra["crosscheck"] = doc.Crosscheck
+	}
+	if doc.Digest != "" {
+		extra["digest"] = doc.Digest
 	}
 	if len(extra) > 0 {
 		n.Extra = extra

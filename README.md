@@ -157,8 +157,14 @@ Other commands:
 
 ```sh
 bin/codetospec verify --src <repo> --out <graph>   # re-check citations, exit 1 on violation
+bin/codetospec drift  --src <repo> --out <graph>   # flag rules whose cited code changed, exit 1 on drift
 bin/codetospec stats  --out <graph>                # phase counters and token costs
 ```
+
+Each rule stores a digest of its cited code, so `drift` reports which rules
+went stale as the source evolves — the spec stays honest about what it still
+matches. The output README also lists near-duplicate rule candidates (a
+deterministic consistency check) for a reviewer to reconcile.
 
 Useful flags: `--crosscheck` (adversarial review pass), `--repair` (fix
 flagged citations, needs a SCIP index), `--workers N` (map

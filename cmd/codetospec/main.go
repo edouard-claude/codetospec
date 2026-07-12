@@ -19,7 +19,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"codetospec/internal/config"
+	"codetospec/internal/consistency"
 	"codetospec/internal/crosscheck"
+	"codetospec/internal/drift"
 	"codetospec/internal/extract"
 	"codetospec/internal/graph"
 	"codetospec/internal/llm"
@@ -40,6 +42,7 @@ func main() {
 const usageText = `usage:
   codetospec run --src <repo-dir> --out <graph-dir> [flags]
   codetospec verify --src <repo-dir> --out <graph-dir>
+  codetospec drift --src <repo-dir> --out <graph-dir>
   codetospec stats --out <graph-dir>`
 
 func run(args []string) int {
@@ -78,6 +81,14 @@ func run(args []string) int {
 		}
 		setupLogging(cfg.LogLevel)
 		return verifyCommand(cfg)
+	case "drift":
+		cfg, err := config.ParseVerify(args[1:]) // same flags as verify
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		setupLogging(cfg.LogLevel)
+		return driftCommand(cfg)
 	case "stats":
 		cfg, err := config.ParseStats(args[1:])
 		if err != nil {
@@ -446,6 +457,22 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		checkTally = crosscheck.Count(verdictsByRule)
 	}
 
+	// Stamp each rule with a digest of its cited code, enabling later drift
+	// checks against an evolving source tree.
+	for i := range nodes {
+		if nodes[i].Type != "rule" {
+			continue
+		}
+		digest, digestErr := drift.Digest(cfg.Src, nodes[i].Sources)
+		if digestErr != nil {
+			continue // a broken citation is caught by verify below
+		}
+		if nodes[i].Extra == nil {
+			nodes[i].Extra = map[string]string{}
+		}
+		nodes[i].Extra["digest"] = digest
+	}
+
 	violations := verify.Run(nodes, cfg.Src)
 	if len(violations) > 0 {
 		for _, v := range violations {
@@ -469,6 +496,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		CrosscheckUnsupported: checkTally.Unsupported,
 		CrosscheckRepaired:    checkTally.Repaired,
 		CrosscheckFailed:      checkTally.Failed,
+		DuplicatePairs:        consistency.FindDuplicates(nodes, consistency.DefaultThreshold),
 	}
 	for name, status := range extractorStatus {
 		if status != "ok" {
@@ -638,6 +666,26 @@ func verifyCommand(cfg *config.Config) int {
 		return 1
 	}
 	fmt.Printf("ok: %d nodes verified\n", len(nodes))
+	return 0
+}
+
+func driftCommand(cfg *config.Config) int {
+	nodes, err := render.LoadDir(cfg.Out)
+	if err != nil {
+		slog.Error("cannot load graph", "err", err)
+		return 1
+	}
+	report := drift.Check(nodes, cfg.Src)
+	for _, rs := range report.Rules {
+		if rs.Status == drift.StatusStale || rs.Status == drift.StatusBroken {
+			fmt.Printf("%s: %s — %s\n", rs.Status, rs.RuleID, rs.Detail)
+		}
+	}
+	fmt.Printf("drift: %d ok, %d stale, %d broken, %d unknown (of %d rules)\n",
+		report.OK, report.Stale, report.Broken, report.Unknown, len(report.Rules))
+	if report.Drifted() {
+		return 1
+	}
 	return 0
 }
 
