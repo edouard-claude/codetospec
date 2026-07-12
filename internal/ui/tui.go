@@ -77,9 +77,9 @@ type Model struct {
 	lastDomain                            string
 	reduceUsage                           llm.Usage
 
-	checkDone, checkTotal                    int
-	checkSupported, checkPartial, checkOther int
-	checkUsage                               llm.Usage
+	checkDone, checkTotal                                   int
+	checkSupported, checkRepaired, checkPartial, checkOther int
+	checkUsage                                              llm.Usage
 
 	journal  []string
 	finished bool
@@ -198,6 +198,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Verdict {
 		case "supported":
 			m.checkSupported++
+		case "repaired":
+			m.checkRepaired++
 		case "partial":
 			m.checkPartial++
 		default:
@@ -297,6 +299,9 @@ func (m Model) View() string {
 		b.WriteString(m.phaseIcon("crosscheck") + labelStyle.Render("check") + " ")
 		fmt.Fprintf(&b, "%d/%d règles contre-vérifiées · ", m.checkDone, m.checkTotal)
 		b.WriteString(okStyle.Render(fmt.Sprintf("%d supported", m.checkSupported)))
+		if m.checkRepaired > 0 {
+			b.WriteString(okStyle.Render(fmt.Sprintf(" · %d réparés", m.checkRepaired)))
+		}
 		if m.checkPartial > 0 {
 			b.WriteString(dimStyle.Render(fmt.Sprintf(" · %d partial", m.checkPartial)))
 		}
