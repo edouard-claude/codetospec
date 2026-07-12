@@ -124,7 +124,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			m.quitting = true
-			m.appendJournal("arrêt demandé, sauvegarde de l'état...")
+			m.appendJournal("stopping, saving state...")
 			if m.cancel != nil {
 				m.cancel()
 			}
@@ -230,7 +230,7 @@ func (m *Model) appendJournal(line string) {
 // View implements tea.Model.
 func (m Model) View() string {
 	if m.width == 0 {
-		return "démarrage..."
+		return "starting..."
 	}
 	var b strings.Builder
 
@@ -240,7 +240,7 @@ func (m Model) View() string {
 
 	// EXTRACT
 	b.WriteString(m.phaseIcon("extract") + labelStyle.Render("extract") + " ")
-	extractLine := fmt.Sprintf("%d fichiers · %d facts", m.filesWalked, m.factsTotal)
+	extractLine := fmt.Sprintf("%d files · %d facts", m.filesWalked, m.factsTotal)
 	if kinds := formatKinds(m.factsByKind); kinds != "" {
 		extractLine += dimStyle.Render(" (" + kinds + ")")
 	}
@@ -250,7 +250,7 @@ func (m Model) View() string {
 		if e.Status != "ok" {
 			status = failStyle.Render(e.Status)
 		}
-		b.WriteString("          " + dimStyle.Render(fmt.Sprintf("extracteur %s: ", e.Name)) + status +
+		b.WriteString("          " + dimStyle.Render(fmt.Sprintf("extractor %s: ", e.Name)) + status +
 			dimStyle.Render(fmt.Sprintf(" · %d facts", e.Facts)) + "\n")
 	}
 	if m.phase == "extract" && m.lastFile != "" {
@@ -268,45 +268,45 @@ func (m Model) View() string {
 		b.WriteString(m.bar.ViewAs(percent))
 		fmt.Fprintf(&b, " %d/%d", m.mapDone, m.mapTotal)
 		if m.mapFailed > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d échecs", m.mapFailed)))
+			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d failed", m.mapFailed)))
 		}
-		fmt.Fprintf(&b, " · %d règles candidates", m.mapRules)
+		fmt.Fprintf(&b, " · %d candidate rules", m.mapRules)
 		b.WriteString("\n")
 		if m.phase == "map" && m.lastChunk != "" {
 			b.WriteString("          " + m.spinner.View() + dimStyle.Render(m.lastChunk) + "\n")
 		}
 	} else {
-		b.WriteString(dimStyle.Render("en attente") + "\n")
+		b.WriteString(dimStyle.Render("waiting") + "\n")
 	}
 
 	// REDUCE
 	b.WriteString(m.phaseIcon("reduce") + labelStyle.Render("reduce") + " ")
 	if m.reduceTotal > 0 {
-		fmt.Fprintf(&b, "%d/%d domaines · %d règles finales", m.reduceDone, m.reduceTotal, m.reduceRules)
+		fmt.Fprintf(&b, "%d/%d domains · %d final rules", m.reduceDone, m.reduceTotal, m.reduceRules)
 		if m.reduceFailed > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d échecs", m.reduceFailed)))
+			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d failed", m.reduceFailed)))
 		}
 		if m.phase == "reduce" {
 			b.WriteString("  " + m.spinner.View() + dimStyle.Render(m.lastDomain))
 		}
 		b.WriteString("\n")
 	} else {
-		b.WriteString(dimStyle.Render("en attente") + "\n")
+		b.WriteString(dimStyle.Render("waiting") + "\n")
 	}
 
 	// CROSSCHECK (only shown once the phase produced something)
 	if m.checkTotal > 0 {
 		b.WriteString(m.phaseIcon("crosscheck") + labelStyle.Render("check") + " ")
-		fmt.Fprintf(&b, "%d/%d règles contre-vérifiées · ", m.checkDone, m.checkTotal)
+		fmt.Fprintf(&b, "%d/%d rules cross-checked · ", m.checkDone, m.checkTotal)
 		b.WriteString(okStyle.Render(fmt.Sprintf("%d supported", m.checkSupported)))
 		if m.checkRepaired > 0 {
-			b.WriteString(okStyle.Render(fmt.Sprintf(" · %d réparés", m.checkRepaired)))
+			b.WriteString(okStyle.Render(fmt.Sprintf(" · %d repaired", m.checkRepaired)))
 		}
 		if m.checkPartial > 0 {
 			b.WriteString(dimStyle.Render(fmt.Sprintf(" · %d partial", m.checkPartial)))
 		}
 		if m.checkOther > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d à revoir", m.checkOther)))
+			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d to review", m.checkOther)))
 		}
 		b.WriteString("\n")
 	}
@@ -322,7 +322,7 @@ func (m Model) View() string {
 	}
 
 	// Footer
-	footer := fmt.Sprintf("tokens map %s · reduce %s · total %s   %s   [q] quitter",
+	footer := fmt.Sprintf("tokens map %s · reduce %s · total %s   %s   [q] quit",
 		formatUsage(m.mapUsage), formatUsage(m.reduceUsage),
 		formatUsage(sumUsage(sumUsage(m.mapUsage, m.reduceUsage), m.checkUsage)), m.elapsed)
 	b.WriteString("\n" + footerStyle.Width(m.width).Render(footer))

@@ -43,15 +43,15 @@ func TestModelViewReflectsProgress(t *testing.T) {
 		"codetospec",
 		"old-legacy-app",
 		"deepseek-chat",
-		"2 fichiers",
+		"2 files",
 		"12 facts",
 		"38 chunks",
 		"2/38",
-		"3 règles candidates",
+		"3 candidate rules",
 		"index.php:1-90",
 		"extractor failed",
 		"7k+900", // map tokens: prompt 7000, completion 900
-		"[q] quitter",
+		"[q] quit",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q:\n%s", want, view)

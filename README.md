@@ -6,19 +6,19 @@ business rules.
 ```text
  codetospec  old-legacy-app → ./spec-graph                          deepseek-chat · 8 workers
 
- ✓ extract   118 fichiers · 512 facts (import 61 · module 14 · route 8 · symbol 402 · table 27)
-          extracteur go: ok · 35 facts
-          extracteur scip: ok · 402 facts
+ ✓ extract   118 files · 512 facts (import 61 · module 14 · route 8 · symbol 402 · table 27)
+          extractor go: ok · 35 facts
+          extractor scip: ok · 402 facts
  ✓ chunk     460 chunks
- ✓ map       ███████████████████████████████████████████████  100% 460/460 · 920 règles candidates
- ✓ reduce    21/21 domaines · 252 règles finales
- ● check     210/312 règles contre-vérifiées · 98 supported · 48 réparés · 32 partial · 32 à revoir
+ ✓ map       ███████████████████████████████████████████████  100% 460/460 · 920 candidate rules
+ ✓ reduce    21/21 domains · 252 final rules
+ ● check     210/312 rules cross-checked · 98 supported · 48 repaired · 32 partial · 32 to review
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
 │ repaired rule.billing.prorata-refund → cited span 88-140 overlaps func Refund                │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 
- tokens map 1.1M+322k · reduce 189k+88k · total 1.6M+450k   6m12s   [q] quitter
+ tokens map 1.1M+322k · reduce 189k+88k · total 1.6M+450k   6m12s   [q] quit
 ```
 
 `codetospec` reads a source repository and produces a markdown graph: domain,

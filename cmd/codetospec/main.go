@@ -150,12 +150,12 @@ func runTUI(ctx context.Context, cfg *config.Config) int {
 	result, finished := model.Result()
 	if !finished {
 		// User quit before the pipeline reported; state is saved.
-		fmt.Println("interrompu, état sauvegardé ; relancer pour reprendre")
+		fmt.Println("interrupted, state saved; rerun to resume")
 		return 130
 	}
 	switch {
 	case errors.Is(result.Err, context.Canceled):
-		fmt.Println("interrompu, état sauvegardé ; relancer pour reprendre")
+		fmt.Println("interrupted, state saved; rerun to resume")
 		return 130
 	case result.Err != nil:
 		fmt.Fprintln(os.Stderr, "run failed:", result.Err)
