@@ -163,8 +163,11 @@ bin/codetospec stats  --out <graph>                # phase counters and token co
 
 Each rule stores a digest of its cited code, so `drift` reports which rules
 went stale as the source evolves — the spec stays honest about what it still
-matches. The output README also lists near-duplicate rule candidates (a
-deterministic consistency check) for a reviewer to reconcile.
+matches. `drift --format json` emits a machine-readable summary and exits 1
+on drift, so it drops straight into CI (see `examples/spec-drift.yml`). The
+output README also lists near-duplicate rule candidates (a deterministic
+consistency check, split into intra- and cross-domain) for a reviewer to
+reconcile.
 
 Useful flags: `--crosscheck` (adversarial review pass), `--repair` (fix
 flagged citations, needs a SCIP index), `--workers N` (map

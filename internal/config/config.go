@@ -63,6 +63,7 @@ type Config struct {
 	Crosscheck     bool
 	Repair         bool
 	ReduceBatch    int
+	Format         string // drift output format: "text" | "json"
 }
 
 // DefaultExclude lists the directories ignored by default.
@@ -155,6 +156,27 @@ func ParseVerify(args []string) (*Config, error) {
 	}
 	if cfg.Src == "" || cfg.Out == "" {
 		return nil, errors.New("verify requires --src and --out")
+	}
+	return cfg, nil
+}
+
+// ParseDrift resolves the drift command configuration (verify flags plus an
+// output format for CI).
+func ParseDrift(args []string) (*Config, error) {
+	fs := flag.NewFlagSet("drift", flag.ContinueOnError)
+	cfg := &Config{}
+	fs.StringVar(&cfg.Src, "src", "", "root of the analyzed repository (required)")
+	fs.StringVar(&cfg.Out, "out", "", "graph directory to check (required)")
+	fs.StringVar(&cfg.Format, "format", "text", "output format: text or json")
+	fs.StringVar(&cfg.LogLevel, "log-level", "info", "debug, info, warn or error")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if cfg.Src == "" || cfg.Out == "" {
+		return nil, errors.New("drift requires --src and --out")
+	}
+	if cfg.Format != "text" && cfg.Format != "json" {
+		return nil, fmt.Errorf("--format %q must be text or json", cfg.Format)
 	}
 	return cfg, nil
 }

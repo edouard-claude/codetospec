@@ -1,0 +1,28 @@
+# Example GitHub Actions workflow: fail a pull request whose code changes make
+# the committed spec graph go stale. Copy to .github/workflows/ in the repo
+# you analyze, and commit the spec graph (the --out directory) alongside it.
+name: Spec drift check
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - "app/**"
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build codetospec
+        run: go build -o bin/codetospec ./cmd/codetospec
+
+      # Exits 1 (fails the PR) if any rule's cited code changed (stale) or a
+      # citation no longer resolves (broken). Machine-readable summary:
+      - name: Check spec drift
+        run: bin/codetospec drift --src . --out ./spec-graph --format json

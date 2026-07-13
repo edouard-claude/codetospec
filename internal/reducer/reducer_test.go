@@ -260,6 +260,72 @@ func TestReduceBatchAdaptiveHalvingRecoversMostRules(t *testing.T) {
 	}
 }
 
+func TestReduceCacheInvalidatedByChangedCandidates(t *testing.T) {
+	calls := 0
+	r := newReducer(t, chatFunc(func(context.Context, []llm.Message) (string, llm.Usage, error) {
+		calls++
+		return validReduceReply, llm.Usage{}, nil
+	}))
+	if _, err := r.Run(context.Background(), candidates()); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("first run calls = %d, want 1", calls)
+	}
+	// Same candidates → cache hit, no new call.
+	if _, err := r.Run(context.Background(), candidates()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("unchanged candidates should hit cache, calls = %d", calls)
+	}
+	// Changed candidate → cache stale → re-reduced.
+	changed := candidates()
+	changed["billing"][0].Requirement = "QUAND z, le systeme doit w."
+	if _, err := r.Run(context.Background(), changed); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("changed candidates should re-reduce, calls = %d, want 2", calls)
+	}
+}
+
+func TestReduceParallelDeterministic(t *testing.T) {
+	// Several domains reduced by a worker pool must return sorted, stable.
+	multi := map[string][]mapper.Rule{}
+	for _, d := range []string{"zeta", "alpha", "mu", "beta", "kappa"} {
+		multi[d] = []mapper.Rule{{
+			Title: "T", EarsKind: "event", Requirement: "QUAND x, le systeme doit y.",
+			Citations: []extract.Ref{{Path: "app/X.php", Lines: "12-15"}}, Entities: []string{"entity.invoices"},
+		}}
+	}
+	run := func() []string {
+		r := newReducer(t, chatFunc(func(context.Context, []llm.Message) (string, llm.Usage, error) {
+			return validReduceReply, llm.Usage{}, nil
+		}))
+		r.Workers = 4
+		outputs, err := r.Run(context.Background(), multi)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		got := make([]string, len(outputs))
+		for i, o := range outputs {
+			got[i] = o.Domain
+		}
+		return got
+	}
+	first := run()
+	want := []string{"alpha", "beta", "kappa", "mu", "zeta"}
+	for i, d := range want {
+		if first[i] != d {
+			t.Fatalf("parallel output not sorted: %v, want %v", first, want)
+		}
+	}
+	if second := run(); strings.Join(first, ",") != strings.Join(second, ",") {
+		t.Fatalf("parallel reduce not deterministic: %v vs %v", first, second)
+	}
+}
+
 func TestReduceResumeSkipsCachedDomains(t *testing.T) {
 	r := newReducer(t, chatFunc(func(context.Context, []llm.Message) (string, llm.Usage, error) {
 		return validReduceReply, llm.Usage{}, nil

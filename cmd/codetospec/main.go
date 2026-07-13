@@ -82,7 +82,7 @@ func run(args []string) int {
 		setupLogging(cfg.LogLevel)
 		return verifyCommand(cfg)
 	case "drift":
-		cfg, err := config.ParseVerify(args[1:]) // same flags as verify
+		cfg, err := config.ParseDrift(args[1:])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
@@ -374,6 +374,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 		Entities:  entities,
 		Endpoints: allEndpoints,
 		BatchSize: cfg.ReduceBatch,
+		Workers:   cfg.Workers,
 		OnUnit: func(out reducer.Output, usage llm.Usage) {
 			var done int
 			if err := st.Update(func(s *state.State) {
@@ -676,13 +677,27 @@ func driftCommand(cfg *config.Config) int {
 		return 1
 	}
 	report := drift.Check(nodes, cfg.Src)
-	for _, rs := range report.Rules {
-		if rs.Status == drift.StatusStale || rs.Status == drift.StatusBroken {
-			fmt.Printf("%s: %s — %s\n", rs.Status, rs.RuleID, rs.Detail)
+
+	if cfg.Format == "json" {
+		payload := map[string]int{
+			"ok": report.OK, "stale": report.Stale,
+			"broken": report.Broken, "unknown": report.Unknown, "total": len(report.Rules),
 		}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			slog.Error("encode drift report", "err", err)
+			return 1
+		}
+		fmt.Println(string(data))
+	} else {
+		for _, rs := range report.Rules {
+			if rs.Status == drift.StatusStale || rs.Status == drift.StatusBroken {
+				fmt.Printf("%s: %s — %s\n", rs.Status, rs.RuleID, rs.Detail)
+			}
+		}
+		fmt.Printf("drift: %d ok, %d stale, %d broken, %d unknown (of %d rules)\n",
+			report.OK, report.Stale, report.Broken, report.Unknown, len(report.Rules))
 	}
-	fmt.Printf("drift: %d ok, %d stale, %d broken, %d unknown (of %d rules)\n",
-		report.OK, report.Stale, report.Broken, report.Unknown, len(report.Rules))
 	if report.Drifted() {
 		return 1
 	}

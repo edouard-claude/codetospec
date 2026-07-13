@@ -49,17 +49,19 @@ hors de ce jeu. Le convertisseur SCIP émet des facts `symbol` avec
 ## Cache & reprise (`<out>/.codetospec/`)
 
 - `map/<chunkID>.json` — clé = hash du contenu du chunk.
-- `reduce/<domain>.json` — clé = domaine.
+- `reduce/<domain>.json` — réutilisé si le hash des candidates (`candidates_hash`) correspond.
 - `crosscheck/<ruleID>.json` — clé = hash (règle + lignes citées).
 
 Reprise = existence de ces fichiers. Pour rejouer une phase, **purger son
 cache** (`rm -rf .codetospec/reduce`) puis relancer ; les phases amont
 restantes sont réutilisées. `state.json` cumule les tokens entre runs.
 
-Gotcha : map (clé = hash contenu) et crosscheck (clé = hash règle+lignes)
-sont *content-aware* — ils se refont si le code change. Le **reduce** est
-indexé par nom de domaine seul : après une édition du code source, purger
-`.codetospec/reduce` à la main, sinon les sorties reduce restent périmées.
+Les trois phases sont *content-aware* : map (clé = hash contenu du chunk),
+reduce (clé = hash des candidates du domaine, stocké dans le `.json`) et
+crosscheck (clé = hash règle+lignes). Après une édition du code, le re-run
+refait automatiquement ce qui a changé — plus de purge manuelle du reduce.
+Le reduce tourne aussi en worker pool (`--workers`), les domaines étant
+indépendants (le `depends_on` est calculé au build).
 
 ## Conventions
 

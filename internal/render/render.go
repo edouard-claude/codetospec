@@ -284,8 +284,17 @@ func readme(nodes []graph.Node, meta Meta) string {
 	}
 
 	if len(meta.DuplicatePairs) > 0 {
+		intra, cross := 0, 0
+		for _, p := range meta.DuplicatePairs {
+			if ruleDomain(p.A) == ruleDomain(p.B) {
+				intra++
+			} else {
+				cross++
+			}
+		}
 		b.WriteString("\n## Doublons candidats\n\n")
-		fmt.Fprintf(&b, "%d paires de règles à l'exigence quasi identique (à réconcilier) :\n\n", len(meta.DuplicatePairs))
+		fmt.Fprintf(&b, "%d paires de règles à l'exigence quasi identique (à réconcilier) — %d intra-domaine, %d cross-domaine :\n\n",
+			len(meta.DuplicatePairs), intra, cross)
 		shown := meta.DuplicatePairs
 		if len(shown) > 20 {
 			shown = shown[:20]
@@ -323,6 +332,15 @@ func readme(nodes []graph.Node, meta Meta) string {
 // mermaidID makes a slug safe as a Mermaid node identifier.
 func mermaidID(slug string) string {
 	return strings.ReplaceAll(slug, "-", "_")
+}
+
+// ruleDomain extracts the domain segment of a rule id ("rule.<domain>.<slug>").
+func ruleDomain(ruleID string) string {
+	parts := strings.SplitN(ruleID, ".", 3)
+	if len(parts) >= 2 {
+		return parts[1]
+	}
+	return ""
 }
 
 func llmsTxt(nodes []graph.Node) string {

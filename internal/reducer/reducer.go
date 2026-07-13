@@ -1,9 +1,11 @@
-// Package reducer runs the REDUCE phase: one sequential LLM call per domain,
-// consolidating candidate rules into a deduplicated specification.
+// Package reducer runs the REDUCE phase: one LLM call per domain (in a worker
+// pool), consolidating candidate rules into a deduplicated specification.
 package reducer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"codetospec/internal/extract"
 	"codetospec/internal/llm"
@@ -60,11 +63,12 @@ type Rule struct {
 
 // Output is the persisted result of reducing one domain.
 type Output struct {
-	Domain        string `json:"domain"`
-	DomainSummary string `json:"domain_summary"`
-	Rules         []Rule `json:"rules"`
-	Failed        bool   `json:"failed,omitempty"`
-	Error         string `json:"error,omitempty"`
+	Domain         string `json:"domain"`
+	DomainSummary  string `json:"domain_summary"`
+	Rules          []Rule `json:"rules"`
+	CandidatesHash string `json:"candidates_hash,omitempty"` // content of the candidates this was reduced from
+	Failed         bool   `json:"failed,omitempty"`
+	Error          string `json:"error,omitempty"`
 }
 
 // reducePayload mirrors the JSON schema requested from the LLM.
@@ -81,12 +85,15 @@ type Reducer struct {
 	Entities  []string // allowed entity ids
 	Endpoints []string // allowed endpoint ids
 	BatchSize int      // candidates per reduce call; 0 uses DefaultBatchSize
+	Workers   int      // parallel domains; 0 or 1 means sequential
 	// OnUnit is called after each finished domain with its token usage.
 	OnUnit func(out Output, usage llm.Usage)
 }
 
-// Run reduces every domain sequentially, in sorted domain order, skipping
-// domains whose output file already exists.
+// Run reduces every domain, in a worker pool (domains are independent —
+// cross-domain edges are computed later, in the build phase). Domains whose
+// cached output still matches their candidates are reused. Results are
+// returned sorted by domain for determinism.
 func (r *Reducer) Run(ctx context.Context, candidates map[string][]mapper.Rule) ([]Output, error) {
 	if err := os.MkdirAll(r.OutDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create reduce dir: %w", err)
@@ -97,21 +104,53 @@ func (r *Reducer) Run(ctx context.Context, candidates map[string][]mapper.Rule) 
 	}
 	sort.Strings(domains)
 
-	var outputs []Output
-	for _, domain := range domains {
-		if err := ctx.Err(); err != nil {
-			return outputs, err
-		}
-		out, usage, err := r.reduceDomain(ctx, domain, candidates[domain])
+	workers := max(r.Workers, 1)
+	jobs := make(chan string)
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		outputs []Output
+		runErr  error
+	)
+	record := func(out Output, usage llm.Usage, err error) {
+		mu.Lock()
+		defer mu.Unlock()
 		if err != nil {
-			return outputs, err
+			if runErr == nil {
+				runErr = err
+			}
+			return
 		}
 		outputs = append(outputs, out)
 		if r.OnUnit != nil {
 			r.OnUnit(out, usage)
 		}
 	}
-	return outputs, nil
+
+	for range workers {
+		wg.Go(func() {
+			for domain := range jobs {
+				out, usage, err := r.reduceDomain(ctx, domain, candidates[domain])
+				record(out, usage, err)
+			}
+		})
+	}
+feed:
+	for _, domain := range domains {
+		select {
+		case <-ctx.Done():
+			break feed
+		case jobs <- domain:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	if runErr == nil && ctx.Err() != nil {
+		runErr = ctx.Err()
+	}
+	sort.SliceStable(outputs, func(i, j int) bool { return outputs[i].Domain < outputs[j].Domain })
+	return outputs, runErr
 }
 
 // DefaultBatchSize caps how many candidate rules go into one reduce call.
@@ -125,12 +164,17 @@ const DefaultBatchSize = 30
 // deterministically.
 func (r *Reducer) reduceDomain(ctx context.Context, domain string, rules []mapper.Rule) (Output, llm.Usage, error) {
 	outPath := filepath.Join(r.OutDir, domain+".json")
+	hash := candidatesHash(rules)
 	if data, err := os.ReadFile(outPath); err == nil {
 		var cached Output
-		if unmarshalErr := json.Unmarshal(data, &cached); unmarshalErr == nil {
-			return cached, llm.Usage{}, nil
+		switch unmarshalErr := json.Unmarshal(data, &cached); {
+		case unmarshalErr != nil:
+			slog.Warn("corrupt reduce cache, re-reducing", "path", outPath)
+		case cached.CandidatesHash == hash:
+			return cached, llm.Usage{}, nil // candidates unchanged
+		default:
+			slog.Info("reduce cache stale (candidates changed), re-reducing", "domain", domain)
 		}
-		slog.Warn("corrupt reduce cache, re-reducing", "path", outPath)
 	}
 
 	batchSize := r.BatchSize
@@ -154,6 +198,7 @@ func (r *Reducer) reduceDomain(ctx context.Context, domain string, rules []mappe
 			return Output{}, usage, err
 		}
 	}
+	out.CandidatesHash = hash
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
@@ -401,6 +446,25 @@ func uniqueSlug(slug string, taken map[string]bool) string {
 			return candidate
 		}
 	}
+}
+
+// candidatesHash is a stable content hash of a domain's candidate rules, so
+// the reduce cache is invalidated when the candidates change (e.g. after the
+// source code was edited and re-mapped).
+func candidatesHash(rules []mapper.Rule) string {
+	sorted := append([]mapper.Rule(nil), rules...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Requirement != sorted[j].Requirement {
+			return sorted[i].Requirement < sorted[j].Requirement
+		}
+		return sorted[i].Title < sorted[j].Title
+	})
+	data, err := json.Marshal(sorted)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func citationSet(rules []mapper.Rule) map[string]bool {
