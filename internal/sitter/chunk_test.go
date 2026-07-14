@@ -58,14 +58,19 @@ func TestChunkFileLargeClassSplitsPerMethod(t *testing.T) {
 		t.Fatalf("chunks = %d, want 2 (one per method)", len(chunks))
 	}
 	for _, c := range chunks {
-		if !strings.HasPrefix(c.Content, "class Big") {
-			t.Errorf("method chunk should start with the class header, got %q", firstLine(c.Content))
+		// The class header is now separate CONTEXT (numbered from its real
+		// start), not folded into the numbered body.
+		if !strings.HasPrefix(c.Context, "class Big") || !strings.Contains(c.Context, "public $prop = 1;") {
+			t.Errorf("method chunk context should be the class header, got %q", firstLine(c.Context))
 		}
-		if !strings.Contains(c.Content, "public $prop = 1;") {
-			t.Error("method chunk header should include the class properties")
+		if c.ContextStart != 3 {
+			t.Errorf("context starts at %d, want 3 (the class declaration line)", c.ContextStart)
 		}
-		if !strings.Contains(c.Content, "public function m") {
-			t.Error("method chunk should contain the method body")
+		if !strings.HasPrefix(c.Content, "    public function m") {
+			t.Errorf("method chunk body should start with the method, got %q", firstLine(c.Content))
+		}
+		if strings.Contains(c.Content, "class Big") {
+			t.Error("class header must not be in the numbered body")
 		}
 	}
 	if chunks[0].StartLine != 7 {

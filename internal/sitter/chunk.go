@@ -18,6 +18,12 @@ type Chunk struct {
 	Namespace string
 	Domain    string
 	Content   string
+	// Context is the enclosing declaration (class header + properties) shown
+	// for a per-method chunk; empty otherwise. Its lines are the real source
+	// lines starting at ContextStart. Content holds only the method body, so
+	// both can be numbered with their true line numbers.
+	Context      string
+	ContextStart int
 }
 
 const (
@@ -74,15 +80,22 @@ func ChunkFile(path, language string, content []byte, info *FileInfo, domainOf f
 			continue
 		}
 		header := ""
+		headerStart := 0
 		if headerEnd := children[0].StartLine - 1; headerEnd >= def.StartLine {
 			header = joinLines(lines, def.StartLine, headerEnd)
+			headerStart = def.StartLine
 		}
 		for _, child := range children {
 			body := joinLines(lines, child.StartLine, child.EndLine)
+			c := makeChunk(child.StartLine, child.EndLine, body)
+			c.Context = header
+			c.ContextStart = headerStart
 			if header != "" {
-				body = header + "\n" + body
+				// Fold the header into the id so a changed class declaration
+				// re-maps the method chunk.
+				c.ID = chunkID(path, child.StartLine, child.EndLine, header+"\x00"+body)
 			}
-			chunks = append(chunks, makeChunk(child.StartLine, child.EndLine, body))
+			chunks = append(chunks, c)
 		}
 	}
 	sort.SliceStable(chunks, func(i, j int) bool { return chunks[i].StartLine < chunks[j].StartLine })

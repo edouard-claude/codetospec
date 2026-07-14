@@ -33,7 +33,7 @@ const systemPrompt = `You are a senior software archaeologist. You read legacy s
 
 Hard rules:
 - Output ONLY a valid JSON object matching the schema provided by the user. No markdown fences, no prose.
-- The CODE is shown with an absolute line number prefixed to every line ("712\t<code>"). Cite using those exact numbers — copy the number shown next to the code, never count lines yourself.
+- The CODE is shown with an absolute line number prefixed to every line ("712\t<code>"). Cite using those exact numbers — copy the number shown next to the code, never count lines yourself. Lines under a CONTEXT block are for reference only; never cite them.
 - Every rule MUST cite one or more exact line ranges inside the provided range. Never cite outside it.
 - When PRECISE_SYMBOLS is present, cite the exact line span of the symbol whose logic a rule describes; do not cite blank lines, import blocks or type declarations that carry no behavior.
 - entities MUST be a subset of ALLOWED_ENTITIES. endpoints MUST be a subset of ALLOWED_ENDPOINTS. When unsure, use [].
@@ -60,17 +60,25 @@ ALLOWED_ENDPOINTS: %s
 OUTPUT JSON SCHEMA:
 {"chunk_summary": string, "rules": [{"title": string, "ears_kind": "ubiquitous|event|state|unwanted|optional", "requirement": string, "citations": [{"path": string, "lines": "A-B"}], "entities": [string], "endpoints": [string], "nature": "business|presentation|technical", "origin": "explicit|implicit", "confidence": number}]}
 
-CODE:
 %s`
 
 // numberedContent renders a chunk's code with the ABSOLUTE line number
 // prefixed to every line, so the model cites the numbers it sees instead of
 // counting from the chunk's start (which drifts on large chunks and produced
-// systematically off-by-N citations).
+// systematically off-by-N citations). For a per-method chunk, the enclosing
+// declaration is shown as non-citable CONTEXT with its own real line numbers,
+// and only the CODE (body) lines are numbered from the chunk start — keeping
+// every citable line number true to the source.
 func numberedContent(chunk sitter.Chunk) string {
-	lines := strings.Split(chunk.Content, "\n")
 	var b strings.Builder
-	for i, line := range lines {
+	if chunk.Context != "" {
+		b.WriteString("CONTEXT (enclosing declaration, shown for reference — do NOT cite these lines):\n")
+		for i, line := range strings.Split(chunk.Context, "\n") {
+			fmt.Fprintf(&b, "%d\t%s\n", chunk.ContextStart+i, line)
+		}
+	}
+	b.WriteString("CODE (cite these exact line numbers):\n")
+	for i, line := range strings.Split(chunk.Content, "\n") {
 		fmt.Fprintf(&b, "%d\t%s\n", chunk.StartLine+i, line)
 	}
 	return strings.TrimRight(b.String(), "\n")
