@@ -186,6 +186,31 @@ func TestMapNoSymbolsSectionWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestMapPromptNumbersCodeLines(t *testing.T) {
+	chunk := sitter.Chunk{
+		ID: "n0", Path: "app/X.php", StartLine: 659, EndLine: 661, Language: "php", Domain: "x",
+		Content: "function a() {\n    return 1;\n}",
+	}
+	m := newMapper(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {
+		user := msgs[1].Content
+		// Each code line must carry its absolute number, starting at 659.
+		if !strings.Contains(user, "659\tfunction a() {") ||
+			!strings.Contains(user, "660\t    return 1;") ||
+			!strings.Contains(user, "661\t}") {
+			t.Errorf("code lines not numbered from the absolute start:\n%s", user)
+		}
+		if !strings.Contains(msgs[0].Content, "absolute line number") {
+			t.Error("system prompt must instruct to copy the shown line numbers")
+		}
+		return `{"chunk_summary": "s", "rules": [{"title": "T", "ears_kind": "event",
+"requirement": "QUAND x, le systeme doit y.", "citations": [{"path": "app/X.php", "lines": "659-661"}],
+"entities": [], "endpoints": [], "nature": "business", "origin": "explicit", "confidence": 0.9}]}`, llm.Usage{}, nil
+	}))
+	if _, err := m.Run(context.Background(), []sitter.Chunk{chunk}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+}
+
 func TestMapValidationRejectsBadValues(t *testing.T) {
 	chunk := testChunk()
 	cases := map[string]string{

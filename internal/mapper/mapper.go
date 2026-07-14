@@ -33,6 +33,7 @@ const systemPrompt = `You are a senior software archaeologist. You read legacy s
 
 Hard rules:
 - Output ONLY a valid JSON object matching the schema provided by the user. No markdown fences, no prose.
+- The CODE is shown with an absolute line number prefixed to every line ("712\t<code>"). Cite using those exact numbers — copy the number shown next to the code, never count lines yourself.
 - Every rule MUST cite one or more exact line ranges inside the provided range. Never cite outside it.
 - When PRECISE_SYMBOLS is present, cite the exact line span of the symbol whose logic a rule describes; do not cite blank lines, import blocks or type declarations that carry no behavior.
 - entities MUST be a subset of ALLOWED_ENTITIES. endpoints MUST be a subset of ALLOWED_ENDPOINTS. When unsure, use [].
@@ -61,6 +62,19 @@ OUTPUT JSON SCHEMA:
 
 CODE:
 %s`
+
+// numberedContent renders a chunk's code with the ABSOLUTE line number
+// prefixed to every line, so the model cites the numbers it sees instead of
+// counting from the chunk's start (which drifts on large chunks and produced
+// systematically off-by-N citations).
+func numberedContent(chunk sitter.Chunk) string {
+	lines := strings.Split(chunk.Content, "\n")
+	var b strings.Builder
+	for i, line := range lines {
+		fmt.Fprintf(&b, "%d\t%s\n", chunk.StartLine+i, line)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 // LangName expands a --lang code into the word substituted for <LANG>.
 func LangName(lang string) string {
@@ -223,7 +237,7 @@ func (m *Mapper) mapChunk(ctx context.Context, chunk sitter.Chunk) (Output, llm.
 		chunk.Language, namespace, chunk.Domain,
 		mustJSON(m.Entities), mustJSON(allowedEndpoints),
 		m.symbolsSection(chunk),
-		chunk.Content,
+		numberedContent(chunk),
 	)
 	msgs := []llm.Message{
 		{Role: "system", Content: strings.ReplaceAll(systemPrompt, "<LANG>", LangName(m.Lang))},

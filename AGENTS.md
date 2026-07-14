@@ -25,7 +25,9 @@ Pipeline : `extract → chunk → map → reduce → crosscheck(+repair) → bui
   Ajouter un langage = grammaire + fichier query, zéro modif du cœur.
 - `internal/extract` — modèle Fact, fusion, protocole extracteurs externes.
 - `internal/{mapper,reducer,crosscheck}` — phases LLM, chacune valide
-  mécaniquement sa sortie (2 corrections max puis échec tracé). Le crosscheck
+  mécaniquement sa sortie (2 corrections max puis échec tracé). Le map préfixe
+  chaque ligne du code de son numéro absolu (`numberedContent`) : sinon le
+  modèle *compte* les lignes et dérive (citations off-by-N sur gros chunks). Le crosscheck
   (`--crosscheck`) réfute chaque règle ; avec `--repair` (+ index SCIP), une
   règle rejetée re-cite le span exact d'un symbole précis, adopté seulement
   s'il chevauche un vrai corps de symbole (grounding mécanique).
