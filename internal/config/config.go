@@ -42,6 +42,7 @@ type fileConfig struct {
 	Extractors     []Extractor `yaml:"extractors"`
 	FactsFiles     []string    `yaml:"facts_files"`
 	DomainStrategy string      `yaml:"domain_strategy"`
+	DomainDepth    int         `yaml:"domain_depth"`
 }
 
 // Config is the resolved configuration for one command invocation.
@@ -59,6 +60,7 @@ type Config struct {
 	LogLevel       string
 	Extractors     []Extractor
 	DomainStrategy string
+	DomainDepth    int
 	NoTUI          bool
 	Crosscheck     bool
 	Repair         bool
@@ -104,6 +106,7 @@ func ParseRun(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.Crosscheck, "crosscheck", false, "adversarial review pass: a fresh-context LLM tries to refute each rule against its cited lines")
 	fs.BoolVar(&cfg.Repair, "repair", false, "repair pass (implies --crosscheck): a flagged rule re-cites the exact span of a precise symbol; needs a SCIP index")
 	fs.IntVar(&cfg.ReduceBatch, "reduce-batch", 30, "max candidate rules per reduce call; larger domains are batched then merged")
+	fs.IntVar(&cfg.DomainDepth, "domain-depth", 1, "namespace segments (after the root) forming a domain; 2-3 splits a single-root repo (e.g. core-controller-sdk)")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -136,6 +139,12 @@ func ParseRun(args []string) (*Config, error) {
 	cfg.DomainStrategy = fileCfg.DomainStrategy
 	if cfg.DomainStrategy == "" {
 		cfg.DomainStrategy = "auto"
+	}
+	if !explicit["domain-depth"] && fileCfg.DomainDepth > 0 {
+		cfg.DomainDepth = fileCfg.DomainDepth
+	}
+	if cfg.DomainDepth < 1 {
+		cfg.DomainDepth = 1
 	}
 
 	if err := cfg.validateRun(); err != nil {

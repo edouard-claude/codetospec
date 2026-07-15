@@ -20,3 +20,9 @@ facts_files: []
 # How domains are derived: auto (namespace when available, else first
 # directory), namespace, or directory.
 domain_strategy: auto
+
+# How many namespace segments (after the root) form a domain. 1 = a single
+# segment ("core"); raise to 2-3 when the whole repo lives under one root
+# namespace and would collapse into one mega-domain (gives core-controller,
+# core-server, core-controller-sdk…). Also settable with --domain-depth.
+domain_depth: 1

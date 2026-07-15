@@ -76,6 +76,12 @@ func factRank(f Fact) int {
 // DomainResolver derives domain slugs according to the configured strategy.
 type DomainResolver struct {
 	Strategy string // "auto" | "namespace" | "directory"
+	// Depth is how many namespace segments (after the root prefix) form the
+	// domain. 0 or 1 keeps a single segment ("core"); 2 gives
+	// "core-controller", 3 "core-controller-sdk" — useful when a whole repo
+	// lives under one root namespace and would otherwise collapse to one
+	// mega-domain.
+	Depth int
 }
 
 // Resolve returns the domain slug for a namespace/path pair.
@@ -85,7 +91,7 @@ func (r DomainResolver) Resolve(namespace, path string) string {
 		strategy = "auto"
 	}
 	if strategy != "directory" && namespace != "" {
-		if d := domainFromNamespace(namespace); d != "" {
+		if d := domainFromNamespace(namespace, r.Depth); d != "" {
 			return d
 		}
 	}
@@ -98,18 +104,22 @@ func DomainOf(f Fact, path string) string {
 	return DomainResolver{Strategy: "auto"}.Resolve(f.Attrs["namespace"], path)
 }
 
-// domainFromNamespace picks the segment after the common root prefix
-// (first segment) of a qualified namespace, lowercased.
-func domainFromNamespace(namespace string) string {
+// domainFromNamespace joins the `depth` segments after the common root
+// prefix (first segment) of a qualified namespace, lowercased and slugified.
+func domainFromNamespace(namespace string, depth int) string {
 	segments := SplitQualified(namespace)
-	switch {
-	case len(segments) == 0:
+	if len(segments) == 0 {
 		return ""
-	case len(segments) == 1:
-		return Slugify(segments[0])
-	default:
-		return Slugify(segments[1])
 	}
+	if len(segments) == 1 {
+		return Slugify(segments[0])
+	}
+	if depth < 1 {
+		depth = 1
+	}
+	start := 1
+	end := min(start+depth, len(segments))
+	return Slugify(strings.Join(segments[start:end], "-"))
 }
 
 // domainFromPath picks the first directory under the source root.

@@ -58,6 +58,30 @@ func TestDomainOf(t *testing.T) {
 	}
 }
 
+func TestDomainDepthSplitsSingleRoot(t *testing.T) {
+	ns := `AP\Core\Controller\Sdk`
+	cases := map[int]string{
+		1: "core",
+		2: "core-controller",
+		3: "core-controller-sdk",
+		9: "core-controller-sdk", // capped at available segments
+	}
+	for depth, want := range cases {
+		got := DomainResolver{Strategy: "auto", Depth: depth}.Resolve(ns, "src/x.php")
+		if got != want {
+			t.Errorf("depth %d = %q, want %q", depth, got, want)
+		}
+	}
+	// depth 0 behaves like depth 1 (backward compatible).
+	if got := (DomainResolver{Strategy: "auto"}).Resolve(ns, "src/x.php"); got != "core" {
+		t.Errorf("depth 0 = %q, want core", got)
+	}
+	// short namespace: depth caps gracefully.
+	if got := (DomainResolver{Strategy: "auto", Depth: 3}).Resolve(`AP\Core`, "x.php"); got != "core" {
+		t.Errorf("short ns = %q, want core", got)
+	}
+}
+
 func TestDomainResolverStrategies(t *testing.T) {
 	directory := DomainResolver{Strategy: "directory"}
 	if got := directory.Resolve(`App\Services\Billing`, "app/Services/X.php"); got != "app" {

@@ -180,7 +180,7 @@ func runPipeline(ctx context.Context, cfg *config.Config, sink ui.Sink) (err err
 	}()
 	sink.Emit(ui.RunStarted{Src: cfg.Src, Out: cfg.Out, Model: cfg.Model, Workers: cfg.Workers})
 
-	resolver := extract.DomainResolver{Strategy: cfg.DomainStrategy}
+	resolver := extract.DomainResolver{Strategy: cfg.DomainStrategy, Depth: cfg.DomainDepth}
 
 	// Walk and extract layer A (tree-sitter).
 	files, err := source.Walk(cfg.Src, cfg.Exclude)

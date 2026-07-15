@@ -176,7 +176,9 @@ consistency check, split into intra- and cross-domain) for a reviewer to
 reconcile.
 
 Useful flags: `--crosscheck` (adversarial review pass), `--repair` (fix
-flagged citations, needs a SCIP index), `--workers N` (map
+flagged citations, needs a SCIP index), `--domain-depth N` (split a repo that
+lives under one root namespace into `core-controller`, `core-server`… instead
+of one mega-domain), `--workers N` (map
 parallelism), `--max-tokens N` (raise it if a large domain truncates its
 reduce output), `--lang fr|en` (requirements language),
 `--exclude 'vendor,node_modules,*.md,*.csv'` (directory names and

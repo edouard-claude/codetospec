@@ -89,10 +89,12 @@ hairball; the per-domain reduce is really one giant blind batch.
 lives under a single root (`App\Core\…`, `com.company.…`). One segment isn't
 enough discrimination.
 
-**Fix.** Make domain depth configurable — deriving `core-controller`,
-`core-server`, `core-billing` from deeper segments gives *semantic* domains,
-and the reduce consolidates coherent groups instead of an undifferentiated
-mass.
+**Fix.** Make domain depth configurable (`--domain-depth 2|3`) — deriving
+`core-controller`, `core-server`, `core-billing` from deeper segments gives
+*semantic* domains, and the reduce consolidates coherent groups instead of one
+undifferentiated mass. It's also a throughput fix: a 770-candidate `core`
+domain reduces as ~26 sequential batches on one worker; splitting it lets the
+worker pool run several real domains in parallel.
 
 ---
 
