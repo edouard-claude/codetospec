@@ -59,6 +59,10 @@ func TestReduceNominal(t *testing.T) {
 		if !strings.Contains(msgs[1].Content, "CANDIDATE_RULES:") {
 			t.Error("user prompt missing candidates")
 		}
+		// Acceptance criteria must be constrained to the cited behavior.
+		if !strings.Contains(msgs[0].Content, "Do NOT invent error cases") {
+			t.Error("system prompt missing the acceptance-criteria provability constraint")
+		}
 		return validReduceReply, llm.Usage{PromptTokens: 20, CompletionTokens: 10}, nil
 	}))
 

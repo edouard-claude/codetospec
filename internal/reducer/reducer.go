@@ -31,7 +31,7 @@ Hard rules:
 - entities and endpoints MUST be subsets of the provided allowed lists.
 - Keep requirements in <LANG>, EARS patterns, one behavior per rule.
 - slug: lowercase ascii, words separated by "-", max 5 words, unique within the domain.
-- acceptance_criteria: 2 to 5 concrete, testable checks per rule, derived from the requirement, written in <LANG>.
+- acceptance_criteria: 2 to 5 concrete, testable checks per rule, each restating a behavior the requirement and its cited code actually establish. Do NOT invent error cases, edge cases, thresholds, defaults or inputs the requirement does not state — a criterion that reaches beyond the cited behavior gets the whole rule rejected at review. Written in <LANG>.
 - nature ("business"|"presentation"|"technical") and origin ("explicit"|"implicit"): carry over from the merged candidates; when they disagree, pick the dominant one.
 - confidence: number in [0,1], your certainty in the consolidated rule (roughly the max confidence of the candidates you merged).`
 
@@ -448,9 +448,15 @@ func uniqueSlug(slug string, taken map[string]bool) string {
 	}
 }
 
-// candidatesHash is a stable content hash of a domain's candidate rules, so
-// the reduce cache is invalidated when the candidates change (e.g. after the
-// source code was edited and re-mapped).
+// promptVersion is folded into the reduce cache key. Bump it whenever the
+// reduce prompt changes so cached reductions produced by an older prompt are
+// recomputed instead of silently kept (the cache is keyed by candidate
+// content, which a prompt edit does not change).
+const promptVersion = "2" // 2: acceptance criteria must not reach beyond cited behavior
+
+// candidatesHash is a stable content hash of a domain's candidate rules and
+// the prompt version, so the reduce cache is invalidated when the candidates
+// change (e.g. after the source was edited and re-mapped) or the prompt does.
 func candidatesHash(rules []mapper.Rule) string {
 	sorted := append([]mapper.Rule(nil), rules...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -463,7 +469,7 @@ func candidatesHash(rules []mapper.Rule) string {
 	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(append([]byte(promptVersion+"\n"), data...))
 	return hex.EncodeToString(sum[:])[:16]
 }
 

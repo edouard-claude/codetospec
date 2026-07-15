@@ -51,7 +51,7 @@ hors de ce jeu. Le convertisseur SCIP émet des facts `symbol` avec
 ## Cache & reprise (`<out>/.codetospec/`)
 
 - `map/<chunkID>.json` — clé = hash du contenu du chunk.
-- `reduce/<domain>.json` — réutilisé si le hash des candidates (`candidates_hash`) correspond.
+- `reduce/<domain>.json` — réutilisé si le hash des candidates (`candidates_hash`) correspond. Ce hash **fold une version de prompt** (`promptVersion`) : bumper cette constante à chaque édition du prompt reduce, sinon un changement de prompt est silencieusement ignoré sur cache chaud (le hash ne dépend que du contenu des candidates).
 - `crosscheck/<ruleID>.json` — clé = hash (règle + lignes citées).
 
 Reprise = existence de ces fichiers. Pour rejouer une phase, **purger son
