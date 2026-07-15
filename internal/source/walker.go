@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"codetospec/internal/sitter"
 )
@@ -81,7 +82,8 @@ func Walk(root string, exclude []string) ([]File, error) {
 	return files, nil
 }
 
-// isBinary sniffs the first bytes of a file for a NUL byte.
+// isBinary sniffs the first bytes of a file to decide whether it is source
+// text at all.
 func isBinary(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -90,5 +92,35 @@ func isBinary(path string) bool {
 	defer f.Close()
 	buf := make([]byte, 8000)
 	n, _ := f.Read(buf)
-	return bytes.IndexByte(buf[:n], 0) >= 0
+	return looksBinary(buf[:n])
+}
+
+// looksBinary reports whether a byte sample is not decodable source text. A
+// NUL byte, invalid UTF-8, or a high share of control bytes each mark it. The
+// UTF-8 check is what catches protobuf index blobs (e.g. a .scip file) whose
+// first bytes are ASCII tool/path strings and carry no early NUL — the older
+// NUL-only sniff let those through and chunked them into phantom rules.
+func looksBinary(buf []byte) bool {
+	if len(buf) == 0 {
+		return false
+	}
+	if bytes.IndexByte(buf, 0) >= 0 {
+		return true
+	}
+	// A full read may cut the last rune; drop up to 3 trailing bytes before
+	// judging UTF-8 so a truncated boundary rune is not misread as binary.
+	trimmed := buf
+	for i := 0; i < utf8.UTFMax-1 && len(trimmed) > 0 && !utf8.Valid(trimmed); i++ {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	if !utf8.Valid(trimmed) {
+		return true
+	}
+	ctrl := 0
+	for _, c := range buf {
+		if c < 0x09 || (c > 0x0d && c < 0x20) || c == 0x7f {
+			ctrl++
+		}
+	}
+	return ctrl*100 > len(buf)*30
 }
