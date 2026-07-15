@@ -41,6 +41,29 @@ func newChecker(t *testing.T, chat llm.Chatter) *Checker {
 	}
 }
 
+func TestCitedExcerptShowsContext(t *testing.T) {
+	c := newChecker(t, nil)
+	excerpt, err := c.citedExcerpt(ruleNode().Sources) // cites lines 11-24
+	if err != nil {
+		t.Fatalf("citedExcerpt: %v", err)
+	}
+	// Cited lines are marked ">", context lines "·".
+	if !strings.Contains(excerpt, "11 > ") {
+		t.Errorf("first cited line 11 should be marked '>':\n%s", excerpt)
+	}
+	// At least one line before the cited span (< 11) must appear as context.
+	hasContext := false
+	for ln := range strings.SplitSeq(excerpt, "\n") {
+		if strings.Contains(ln, " · ") {
+			hasContext = true
+			break
+		}
+	}
+	if !hasContext {
+		t.Errorf("excerpt should include surrounding context lines marked '·':\n%s", excerpt)
+	}
+}
+
 func TestCrosscheckNominal(t *testing.T) {
 	calls := 0
 	c := newChecker(t, chatFunc(func(_ context.Context, msgs []llm.Message) (string, llm.Usage, error) {

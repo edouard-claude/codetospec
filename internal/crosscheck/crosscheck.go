@@ -50,7 +50,7 @@ Hard rules:
 - verdict "supported": the cited lines clearly implement the described behavior, including its specific values and thresholds.
 - verdict "partial": the behavior is plausible but the cited lines only show part of it, or values/thresholds differ from the requirement.
 - verdict "unsupported": the cited lines do not show this behavior at all.
-- Judge ONLY from the cited lines. Never assume code you cannot see.
+- The cited lines are marked ">"; up to a few surrounding lines marked "·" are shown as context. Base the verdict on the cited lines, using the context only to read an enclosing condition or scope. Do NOT credit behavior that appears only in context lines, and never assume code you cannot see.
 - Write the reason in <LANG>: one or two concrete sentences naming what the lines do or do not show.`
 
 const userPromptFormat = `RULE: %s
@@ -59,7 +59,7 @@ REQUIREMENT (EARS): %s
 ACCEPTANCE_CRITERIA:
 %s
 
-CITED SOURCE (verbatim, 1-based line numbers):
+CITED SOURCE (1-based line numbers; > = cited, · = surrounding context):
 %s
 
 OUTPUT JSON SCHEMA:
@@ -67,6 +67,13 @@ OUTPUT JSON SCHEMA:
 
 // maxExcerptLines caps how much cited source is sent per rule.
 const maxExcerptLines = 400
+
+// contextLines is how many lines of surrounding source the reviewer sees on
+// each side of a cited span. Enough to reveal an enclosing condition or scope
+// — the common cause of false "unsupported" verdicts on citations too narrow
+// to include the guard that makes them true — without letting the reviewer
+// credit behavior that lives only in the context.
+const contextLines = 10
 
 // Verdict is the persisted result of cross-checking one rule.
 type Verdict struct {
@@ -386,8 +393,11 @@ func formatSymbolCatalog(symbolsByPath map[string][]mapper.SymbolContext) string
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// citedExcerpt reads the exact cited lines from the source tree, with
-// 1-based line numbers, capped at maxExcerptLines.
+// citedExcerpt reads the cited lines from the source tree, with 1-based line
+// numbers and up to contextLines of surrounding source on each side. Cited
+// lines are marked ">", context lines "·", so the reviewer can see enclosing
+// conditions while still judging the citation itself. Capped at
+// maxExcerptLines.
 func (c *Checker) citedExcerpt(sources []extract.Ref) (string, error) {
 	var b strings.Builder
 	budget := maxExcerptLines
@@ -404,9 +414,15 @@ func (c *Checker) citedExcerpt(sources []extract.Ref) (string, error) {
 		if end > len(lines) {
 			end = len(lines)
 		}
+		from := max(start-contextLines, 1)
+		to := min(end+contextLines, len(lines))
 		fmt.Fprintf(&b, "--- %s:%s ---\n", src.Path, src.Lines)
-		for i := start; i <= end && budget > 0; i++ {
-			fmt.Fprintf(&b, "%5d | %s\n", i, lines[i-1])
+		for i := from; i <= to && budget > 0; i++ {
+			marker := "·"
+			if i >= start && i <= end {
+				marker = ">"
+			}
+			fmt.Fprintf(&b, "%5d %s %s\n", i, marker, lines[i-1])
 			budget--
 		}
 		if budget == 0 {
