@@ -6,19 +6,28 @@ business rules.
 ```text
  codetospec  old-legacy-app → ./spec-graph                          deepseek-chat · 8 workers
 
- ✓ extract   118 files · 512 facts (import 61 · module 14 · route 8 · symbol 402 · table 27)
-          extractor go: ok · 35 facts
-          extractor scip: ok · 402 facts
- ✓ chunk     460 chunks
- ✓ map       ███████████████████████████████████████████████  100% 460/460 · 920 candidate rules
- ✓ reduce    21/21 domains · 252 final rules
- ● check     210/312 rules cross-checked · 98 supported · 48 repaired · 32 partial · 32 to review
+  RULES TO REVIEW   214 proven  ·  278/312 checked                                    ELAPSED
+  34                                                                                    6m12s
 
-╭──────────────────────────────────────────────────────────────────────────────────────────────╮
-│ repaired rule.billing.prorata-refund → cited span 88-140 overlaps func Refund                │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ■ extract  →  ■ map  →  ■ reduce  →  ■ check  →  ▢ render
 
- tokens map 1.1M+322k · reduce 189k+88k · total 1.6M+450k   6m12s   [q] quit
+ ╭─────────────────────────────────────────────────────────────────────────────────────╮
+ │ RULES PER DOMAIN   +14 more · 252 total                                               │
+ │        billing  ███████████████████████████████████████████████░░░   38              │
+ │       shipping  ████████████████████████████████░░░░░░░░░░░░░░░░░░   26               │
+ │      inventory  █████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░   20               │
+ │           auth  ███████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   15               │
+ ╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────────────╮
+ │ LATEST VERDICTS   214 proven (48 repaired)  ·  32 partial  ·  34 to review            │
+ │ ✓ rule.billing.prorata-refund                                                         │
+ │ ✓ rule.shipping.freight-surcharge-tiers                                               │
+ │ ≈ rule.auth.session-idle-timeout                                                      │
+ │ ✗ rule.inventory.backorder-threshold                                                  │
+ ╰─────────────────────────────────────────────────────────────────────────────────────╯
+
+ tokens  map 1.1M+322k · reduce 189k+88k · total 1.6M+450k      6m12s      [q] quit
 ```
 
 `codetospec` reads a source repository and produces a markdown graph: domain,

@@ -31,30 +31,47 @@ func TestModelViewReflectsProgress(t *testing.T) {
 		FactsMerged{Total: 12, ByKind: map[string]int{"symbol": 8, "module": 4}},
 		Chunked{Chunks: 38},
 		PhaseChanged{Phase: "map"},
-		MapUnit{Path: "app/billing.php", Lines: "10-80", Rules: 2, Done: 1, Total: 38,
+		MapUnit{Path: "app/billing.php", Lines: "10-80", Domain: "billing", Rules: 2, Done: 1, Total: 38,
 			Usage: llm.Usage{PromptTokens: 4000, CompletionTokens: 500}},
-		MapUnit{Path: "index.php", Lines: "1-90", Rules: 1, Failed: false, Done: 2, Total: 38,
+		MapUnit{Path: "index.php", Lines: "1-90", Domain: "core", Rules: 1, Done: 2, Total: 38,
 			Usage: llm.Usage{PromptTokens: 3000, CompletionTokens: 400}},
 		LogLine{Message: "extractor failed name=php"},
 	)
 
+	// Header, hero (candidate rules), stage strip, per-domain bars, tokens.
 	view := m.View()
 	for _, want := range []string{
-		"codetospec",
-		"old-legacy-app",
-		"deepseek-chat",
-		"2 files",
-		"12 facts",
-		"38 chunks",
-		"2/38",
-		"3 candidate rules",
-		"index.php:1-90",
-		"extractor failed",
-		"7k+900", // map tokens: prompt 7000, completion 900
-		"[q] quit",
+		"codetospec", "old-legacy-app", "deepseek-chat",
+		"CANDIDATE RULES",                   // hero caption
+		"2/38",                              // chunks mapped, in the hero subline
+		"extract", "map", "reduce", "check", // stage strip
+		"CANDIDATES PER DOMAIN", "billing", // domain bars
+		"7k+900",   // map tokens: prompt 7000, completion 900
+		"[q] quit", // footer hint
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q:\n%s", want, view)
+		}
+	}
+
+	// Advance into crosscheck: the verdict stream and proven tally appear.
+	m = drive(t, m,
+		PhaseChanged{Phase: "reduce"},
+		ReduceUnit{Domain: "billing", Rules: 2, Done: 1, Total: 2},
+		PhaseChanged{Phase: "crosscheck"},
+		CrosscheckUnit{RuleID: "rule.billing.prorata", Verdict: "supported", Done: 1, Total: 2},
+		CrosscheckUnit{RuleID: "rule.billing.refund", Verdict: "unsupported", Done: 2, Total: 2},
+	)
+	view = m.View()
+	for _, want := range []string{
+		"RULES TO REVIEW",      // hero flips to the review countdown
+		"LATEST VERDICTS",      // verdict panel
+		"rule.billing.prorata", // a flipped rule id
+		"proven",               // tally
+		"1 to review",          // the unsupported one
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("crosscheck view missing %q:\n%s", want, view)
 		}
 	}
 }

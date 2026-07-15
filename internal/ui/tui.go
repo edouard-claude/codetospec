@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -24,27 +23,70 @@ func (s TUISink) Emit(event any) {
 	s.Program.Send(event)
 }
 
-var (
-	headerStyle   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("62")).Padding(0, 1)
-	phaseDone     = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
-	phaseActive   = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	phasePending  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	labelStyle    = lipgloss.NewStyle().Bold(true).Width(9)
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	failStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	journalStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	footerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("237")).Padding(0, 1)
-	sectionBorder = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(0, 1)
+// Palette — a dark "work queue" look: near-black ground, cream accent, and
+// amber/violet/green stage colors that read as a pipeline.
+const (
+	cream  = lipgloss.Color("#fbf0df")
+	amber  = lipgloss.Color("#fbbf24")
+	violet = lipgloss.Color("#a78bfa")
+	green  = lipgloss.Color("#4ade80")
+	red    = lipgloss.Color("#f87171")
+	ink    = lipgloss.Color("#e5e7eb")
+	gray   = lipgloss.Color("#9ca3af")
+	dim    = lipgloss.Color("#6b7280")
+	line   = lipgloss.Color("#374151")
+	ground = lipgloss.Color("#0b0c10")
 )
 
-// phase ordering for the sidebar ticks.
+// domainHues cycles per-domain bar colors, like the per-crate bars.
+var domainHues = []lipgloss.Color{
+	"#f472b6", "#fb923c", "#f87171", "#34d399", "#38bdf8",
+	"#fbbf24", "#a78bfa", "#22d3ee", "#a3e635", "#fb7185",
+}
+
+var (
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(cream).Background(ground).Padding(0, 1)
+	brandStyle  = lipgloss.NewStyle().Foreground(amber).Bold(true)
+	rightStyle  = lipgloss.NewStyle().Foreground(gray)
+
+	capStyle   = lipgloss.NewStyle().Foreground(dim).Bold(true)
+	heroNum    = lipgloss.NewStyle().Foreground(cream).Bold(true)
+	heroDone   = lipgloss.NewStyle().Foreground(green).Bold(true)
+	heroSub    = lipgloss.NewStyle().Foreground(gray)
+	clockStyle = lipgloss.NewStyle().Foreground(cream)
+
+	dimStyle  = lipgloss.NewStyle().Foreground(dim)
+	grayStyle = lipgloss.NewStyle().Foreground(gray)
+	okStyle   = lipgloss.NewStyle().Foreground(green)
+	okBold    = lipgloss.NewStyle().Foreground(green).Bold(true)
+	amberSt   = lipgloss.NewStyle().Foreground(amber)
+	failStyle = lipgloss.NewStyle().Foreground(red).Bold(true)
+
+	panelStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(line).Padding(0, 1)
+	footerStyle = lipgloss.NewStyle().Foreground(gray).Background(ground).Padding(0, 1)
+	trackStyle  = lipgloss.NewStyle().Foreground(line)
+)
+
+// stages drives both the pipeline strip and the phase ticks.
+var stages = []struct{ key, label string }{
+	{"extract", "extract"},
+	{"map", "map"},
+	{"reduce", "reduce"},
+	{"crosscheck", "check"},
+	{"render", "render"},
+}
+
 var phaseOrder = []string{"extract", "map", "reduce", "build", "crosscheck", "render"}
 
 type tickMsg time.Time
 
 func tickEvery() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+type checkItem struct {
+	id      string
+	verdict string
 }
 
 // Model is the full-screen run dashboard.
@@ -55,9 +97,9 @@ type Model struct {
 
 	width, height int
 	spinner       spinner.Model
-	bar           progress.Model
 	started       time.Time
 	elapsed       time.Duration
+	pulse         bool
 
 	phase       string
 	filesWalked int
@@ -69,16 +111,19 @@ type Model struct {
 
 	mapDone, mapTotal, mapFailed int
 	mapRules                     int
+	mapByDomain                  map[string]int
 	lastChunk                    string
 	mapUsage                     llm.Usage
 
 	reduceDone, reduceTotal, reduceFailed int
 	reduceRules                           int
+	reduceByDomain                        map[string]int
 	lastDomain                            string
 	reduceUsage                           llm.Usage
 
 	checkDone, checkTotal                                   int
 	checkSupported, checkRepaired, checkPartial, checkOther int
+	recentChecks                                            []checkItem
 	checkUsage                                              llm.Usage
 
 	journal  []string
@@ -90,17 +135,17 @@ type Model struct {
 // NewModel builds the dashboard. cancel is invoked when the user quits so
 // the pipeline shuts down cleanly (state saved, resumable).
 func NewModel(src, out, model string, workers int, cancel func()) Model {
-	sp := spinner.New(spinner.WithSpinner(spinner.Dot))
-	sp.Style = phaseActive
-	bar := progress.New(progress.WithDefaultGradient())
+	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
+	sp.Style = lipgloss.NewStyle().Foreground(amber)
 	return Model{
 		src: src, out: out, model: model, workers: workers,
-		cancel:      cancel,
-		spinner:     sp,
-		bar:         bar,
-		started:     time.Now(),
-		factsByKind: map[string]int{},
-		phase:       "extract",
+		cancel:         cancel,
+		spinner:        sp,
+		started:        time.Now(),
+		factsByKind:    map[string]int{},
+		mapByDomain:    map[string]int{},
+		reduceByDomain: map[string]int{},
+		phase:          "extract",
 	}
 }
 
@@ -133,13 +178,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.bar.Width = max(10, min(msg.Width-30, 60))
 		return m, nil
 
 	case tickMsg:
 		if !m.finished {
 			m.elapsed = time.Since(m.started).Round(time.Second)
 		}
+		m.pulse = !m.pulse
 		return m, tickEvery()
 
 	case spinner.TickMsg:
@@ -179,6 +224,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mapFailed++
 		}
 		m.mapRules += msg.Rules
+		if msg.Domain != "" {
+			m.mapByDomain[msg.Domain] += msg.Rules
+		}
 		m.lastChunk = fmt.Sprintf("%s:%s", msg.Path, msg.Lines)
 		m.mapUsage.Add(msg.Usage)
 		return m, nil
@@ -189,6 +237,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reduceFailed++
 		}
 		m.reduceRules += msg.Rules
+		if msg.Domain != "" {
+			m.reduceByDomain[msg.Domain] += msg.Rules
+		}
 		m.lastDomain = msg.Domain
 		m.reduceUsage.Add(msg.Usage)
 		return m, nil
@@ -204,6 +255,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.checkPartial++
 		default:
 			m.checkOther++
+		}
+		m.recentChecks = append(m.recentChecks, checkItem{id: msg.RuleID, verdict: msg.Verdict})
+		if len(m.recentChecks) > 6 {
+			m.recentChecks = m.recentChecks[len(m.recentChecks)-6:]
 		}
 		m.checkUsage.Add(msg.Usage)
 		return m, nil
@@ -222,8 +277,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) appendJournal(line string) {
 	m.journal = append(m.journal, line)
-	if len(m.journal) > 4 {
-		m.journal = m.journal[len(m.journal)-4:]
+	if len(m.journal) > 3 {
+		m.journal = m.journal[len(m.journal)-3:]
 	}
 }
 
@@ -234,142 +289,247 @@ func (m Model) View() string {
 	}
 	var b strings.Builder
 
-	title := fmt.Sprintf("codetospec  %s → %s", m.src, m.out)
-	right := fmt.Sprintf("%s · %d workers", m.model, m.workers)
-	b.WriteString(headerBar(title, right, m.width) + "\n\n")
+	// Header
+	left := brandStyle.Render("codetospec") + rightStyle.Render(fmt.Sprintf("  %s → %s", m.src, m.out))
+	right := rightStyle.Render(fmt.Sprintf("%s · %d workers", m.model, m.workers))
+	b.WriteString(headerBar(left, right, m.width) + "\n\n")
 
-	// EXTRACT
-	b.WriteString(m.phaseIcon("extract") + labelStyle.Render("extract") + " ")
-	extractLine := fmt.Sprintf("%d files · %d facts", m.filesWalked, m.factsTotal)
-	if kinds := formatKinds(m.factsByKind); kinds != "" {
-		extractLine += dimStyle.Render(" (" + kinds + ")")
-	}
-	b.WriteString(extractLine + "\n")
-	for _, e := range m.extractors {
-		status := okStyle.Render("ok")
-		if e.Status != "ok" {
-			status = failStyle.Render(e.Status)
-		}
-		b.WriteString("          " + dimStyle.Render(fmt.Sprintf("extractor %s: ", e.Name)) + status +
-			dimStyle.Render(fmt.Sprintf(" · %d facts", e.Facts)) + "\n")
-	}
-	if m.phase == "extract" && m.lastFile != "" {
-		b.WriteString("          " + dimStyle.Render(m.lastFile) + "\n")
+	// Hero metric + clock
+	b.WriteString(m.hero() + "\n\n")
+
+	// Pipeline stage strip
+	b.WriteString(m.stageStrip() + "\n")
+
+	// Per-domain bars — the "rules land per domain" panel.
+	if bars := m.domainBars(); bars != "" {
+		b.WriteString("\n" + bars + "\n")
 	}
 
-	// CHUNK
-	b.WriteString(m.phaseIcon("map") + labelStyle.Render("chunk") + " ")
-	fmt.Fprintf(&b, "%d chunks\n", m.chunks)
-
-	// MAP
-	b.WriteString(m.phaseIcon("map") + labelStyle.Render("map") + " ")
-	if m.mapTotal > 0 {
-		percent := float64(m.mapDone) / float64(m.mapTotal)
-		b.WriteString(m.bar.ViewAs(percent))
-		fmt.Fprintf(&b, " %d/%d", m.mapDone, m.mapTotal)
-		if m.mapFailed > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d failed", m.mapFailed)))
-		}
-		fmt.Fprintf(&b, " · %d candidate rules", m.mapRules)
-		b.WriteString("\n")
-		if m.phase == "map" && m.lastChunk != "" {
-			b.WriteString("          " + m.spinner.View() + dimStyle.Render(m.lastChunk) + "\n")
-		}
-	} else {
-		b.WriteString(dimStyle.Render("waiting") + "\n")
-	}
-
-	// REDUCE
-	b.WriteString(m.phaseIcon("reduce") + labelStyle.Render("reduce") + " ")
-	if m.reduceTotal > 0 {
-		fmt.Fprintf(&b, "%d/%d domains · %d final rules", m.reduceDone, m.reduceTotal, m.reduceRules)
-		if m.reduceFailed > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d failed", m.reduceFailed)))
-		}
-		if m.phase == "reduce" {
-			b.WriteString("  " + m.spinner.View() + dimStyle.Render(m.lastDomain))
-		}
-		b.WriteString("\n")
-	} else {
-		b.WriteString(dimStyle.Render("waiting") + "\n")
-	}
-
-	// CROSSCHECK (only shown once the phase produced something)
-	if m.checkTotal > 0 {
-		b.WriteString(m.phaseIcon("crosscheck") + labelStyle.Render("check") + " ")
-		fmt.Fprintf(&b, "%d/%d rules cross-checked · ", m.checkDone, m.checkTotal)
-		b.WriteString(okStyle.Render(fmt.Sprintf("%d supported", m.checkSupported)))
-		if m.checkRepaired > 0 {
-			b.WriteString(okStyle.Render(fmt.Sprintf(" · %d repaired", m.checkRepaired)))
-		}
-		if m.checkPartial > 0 {
-			b.WriteString(dimStyle.Render(fmt.Sprintf(" · %d partial", m.checkPartial)))
-		}
-		if m.checkOther > 0 {
-			b.WriteString(failStyle.Render(fmt.Sprintf(" · %d to review", m.checkOther)))
-		}
-		b.WriteString("\n")
+	// Verdict stream — rules flipping proven, like errors.txt → ✓.
+	if len(m.recentChecks) > 0 {
+		b.WriteString("\n" + m.verdictStream() + "\n")
 	}
 
 	// Journal
 	if len(m.journal) > 0 {
-		b.WriteString("\n")
 		lines := make([]string, len(m.journal))
 		for i, l := range m.journal {
-			lines[i] = journalStyle.Render(truncateLine(l, m.width-6))
+			lines[i] = dimStyle.Render("· " + truncateLine(l, m.width-8))
 		}
-		b.WriteString(sectionBorder.Width(m.width-2).Render(strings.Join(lines, "\n")) + "\n")
+		b.WriteString("\n" + strings.Join(lines, "\n") + "\n")
 	}
 
 	// Footer
-	footer := fmt.Sprintf("tokens map %s · reduce %s · total %s   %s   [q] quit",
-		formatUsage(m.mapUsage), formatUsage(m.reduceUsage),
-		formatUsage(sumUsage(sumUsage(m.mapUsage, m.reduceUsage), m.checkUsage)), m.elapsed)
+	total := sumUsage(sumUsage(m.mapUsage, m.reduceUsage), m.checkUsage)
+	footer := fmt.Sprintf("tokens  map %s · reduce %s · total %s      %s      %s",
+		formatUsage(m.mapUsage), formatUsage(m.reduceUsage), formatUsage(total),
+		m.elapsed, quitHint(m))
 	b.WriteString("\n" + footerStyle.Width(m.width).Render(footer))
 	return b.String()
 }
 
+func quitHint(m Model) string {
+	if m.finished {
+		return "done — [q] close"
+	}
+	if m.quitting {
+		return "saving…"
+	}
+	return "[q] quit"
+}
+
+// hero renders the phase-appropriate headline metric, big and bright, with a
+// live clock on the right — the "0 errors left" of the work-queue view.
+func (m Model) hero() string {
+	var n int
+	var cap, sub string
+	numStyle := heroNum
+	proven := m.checkSupported + m.checkRepaired
+	toReview := m.checkPartial + m.checkOther
+
+	switch {
+	case m.checkTotal > 0:
+		n, cap = toReview, "RULES TO REVIEW"
+		sub = okStyle.Render(fmt.Sprintf("%d proven", proven)) +
+			grayStyle.Render(fmt.Sprintf("  ·  %d/%d checked", m.checkDone, m.checkTotal))
+		if toReview == 0 && m.checkDone >= m.checkTotal && m.checkTotal > 0 {
+			numStyle, cap = heroDone, "ALL RULES PROVEN"
+		} else if toReview == 0 {
+			numStyle = heroDone
+		}
+	case m.phase == "reduce" || m.reduceRules > 0:
+		n, cap = m.reduceRules, "RULES CONSOLIDATED"
+		sub = grayStyle.Render(fmt.Sprintf("%d/%d domains", m.reduceDone, m.reduceTotal))
+	case m.phase == "map" || m.mapRules > 0:
+		n, cap = m.mapRules, "CANDIDATE RULES"
+		sub = grayStyle.Render(fmt.Sprintf("%d/%d chunks mapped", m.mapDone, m.mapTotal))
+	default:
+		n, cap = m.factsTotal, "FACTS EXTRACTED"
+		sub = grayStyle.Render(fmt.Sprintf("%d files", m.filesWalked))
+	}
+
+	numTxt := numStyle.Render(bigNum(n))
+	head := capStyle.Render(cap) + "   " + heroSub.Render(sub)
+	left := head + "\n  " + numTxt
+
+	clock := capStyle.Render("ELAPSED") + "\n" + clockStyle.Render(fmt.Sprintf("%8s", m.elapsed))
+	gap := max(m.width-lipgloss.Width(left)-lipgloss.Width(clock)-2, 1)
+	rows := lipgloss.JoinHorizontal(lipgloss.Top, "  "+left, strings.Repeat(" ", gap), clock)
+	return rows
+}
+
+// bigNum groups digits for readability (1,204).
+func bigNum(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if n < 1000 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, c)
+	}
+	return string(out)
+}
+
+// stageStrip renders the pipeline as colored cells that pulse on the active
+// stage — extract ■ → map ■ → reduce ■ → check ▢ → render ▢.
+func (m Model) stageStrip() string {
+	cur := phaseIndex(m.phase)
+	var cells []string
+	for _, st := range stages {
+		ti := phaseIndex(st.key)
+		var sq, name lipgloss.Style
+		var glyph string
+		switch {
+		case m.finished || cur > ti:
+			glyph = "■"
+			sq = lipgloss.NewStyle().Foreground(green)
+			name = lipgloss.NewStyle().Foreground(ink)
+		case cur == ti:
+			glyph = "■"
+			c := amber
+			if !m.pulse {
+				c = cream
+			}
+			sq = lipgloss.NewStyle().Foreground(c).Bold(true)
+			name = lipgloss.NewStyle().Foreground(cream).Bold(true)
+		default:
+			glyph = "▢"
+			sq = lipgloss.NewStyle().Foreground(dim)
+			name = lipgloss.NewStyle().Foreground(dim)
+		}
+		cells = append(cells, sq.Render(glyph)+" "+name.Render(st.label))
+	}
+	return "  " + strings.Join(cells, trackStyle.Render("  →  "))
+}
+
+// domainBars renders one horizontal bar per domain — the analog of the
+// per-crate commit bars. Uses reduce counts once present, else map candidates.
+func (m Model) domainBars() string {
+	src := m.reduceByDomain
+	title := "RULES PER DOMAIN"
+	if len(src) == 0 {
+		src, title = m.mapByDomain, "CANDIDATES PER DOMAIN"
+	}
+	if len(src) == 0 {
+		return ""
+	}
+	type dc struct {
+		name string
+		n    int
+	}
+	items := make([]dc, 0, len(src))
+	maxN, total := 1, 0
+	for k, v := range src {
+		items = append(items, dc{k, v})
+		total += v
+		if v > maxN {
+			maxN = v
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].n != items[j].n {
+			return items[i].n > items[j].n
+		}
+		return items[i].name < items[j].name
+	})
+
+	nameW := 16
+	track := max(min(m.width-nameW-14, 46), 10)
+	const rowsShown = 7
+	var rows []string
+	for i, it := range items {
+		if i >= rowsShown {
+			break
+		}
+		hue := domainHues[i%len(domainHues)]
+		filled := max(it.n*track/maxN, 1)
+		bar := lipgloss.NewStyle().Foreground(hue).Render(strings.Repeat("█", filled)) +
+			trackStyle.Render(strings.Repeat("░", track-filled))
+		name := grayStyle.Render(fmt.Sprintf("%*s", nameW, truncateLine(it.name, nameW)))
+		cnt := lipgloss.NewStyle().Foreground(ink).Render(fmt.Sprintf("%5s", bigNum(it.n)))
+		rows = append(rows, fmt.Sprintf("%s  %s %s", name, bar, cnt))
+	}
+	head := capStyle.Render(title)
+	if len(items) > rowsShown {
+		head += grayStyle.Render(fmt.Sprintf("   +%d more · %s total", len(items)-rowsShown, bigNum(total)))
+	} else {
+		head += grayStyle.Render(fmt.Sprintf("   %s total", bigNum(total)))
+	}
+	return panelStyle.Width(m.width - 6).Render(head + "\n" + strings.Join(rows, "\n"))
+}
+
+// verdictStream shows the latest reviewed rules flipping to a verdict, plus a
+// colored tally — the errors.txt → ✓ column.
+func (m Model) verdictStream() string {
+	var rows []string
+	for _, c := range m.recentChecks {
+		var glyph string
+		var st lipgloss.Style
+		switch c.verdict {
+		case "supported", "repaired":
+			glyph, st = "✓", okStyle
+		case "partial":
+			glyph, st = "≈", amberSt
+		default:
+			glyph, st = "✗", failStyle
+		}
+		id := truncateLine(c.id, max(m.width-16, 20))
+		rows = append(rows, st.Render(glyph)+" "+grayStyle.Render(id))
+	}
+	tally := okBold.Render(fmt.Sprintf("%d proven", m.checkSupported+m.checkRepaired))
+	if m.checkRepaired > 0 {
+		tally += grayStyle.Render(fmt.Sprintf(" (%d repaired)", m.checkRepaired))
+	}
+	if m.checkPartial > 0 {
+		tally += amberSt.Render(fmt.Sprintf("  ·  %d partial", m.checkPartial))
+	}
+	if m.checkOther > 0 {
+		tally += failStyle.Render(fmt.Sprintf("  ·  %d to review", m.checkOther))
+	}
+	head := capStyle.Render("LATEST VERDICTS") + "   " + tally
+	return panelStyle.Width(m.width - 6).Render(head + "\n" + strings.Join(rows, "\n"))
+}
+
 func headerBar(left, right string, width int) string {
-	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right)-4, 1)
+	gap := max(width-lipgloss.Width(left)-lipgloss.Width(right)-2, 1)
 	return headerStyle.Width(width).Render(left + strings.Repeat(" ", gap) + right)
 }
 
-// phaseIcon renders the status glyph of a phase relative to the current one.
-func (m Model) phaseIcon(phase string) string {
-	current, target := phaseIndex(m.phase), phaseIndex(phase)
-	switch {
-	case m.finished || current > target:
-		return phaseDone.Render(" ✓ ")
-	case current == target:
-		return phaseActive.Render(" ● ")
-	default:
-		return phasePending.Render(" ○ ")
-	}
-}
-
 func phaseIndex(phase string) int {
+	// map non-strip phases onto the strip: build folds into reduce's slot.
+	if phase == "build" {
+		phase = "reduce"
+	}
 	for i, p := range phaseOrder {
 		if p == phase {
 			return i
 		}
 	}
 	return 0
-}
-
-func formatKinds(byKind map[string]int) string {
-	if len(byKind) == 0 {
-		return ""
-	}
-	kinds := make([]string, 0, len(byKind))
-	for k := range byKind {
-		kinds = append(kinds, k)
-	}
-	sort.Strings(kinds)
-	parts := make([]string, len(kinds))
-	for i, k := range kinds {
-		parts[i] = fmt.Sprintf("%s %d", k, byKind[k])
-	}
-	return strings.Join(parts, " · ")
 }
 
 func formatTokens(n int) string {
@@ -396,5 +556,5 @@ func truncateLine(s string, width int) string {
 	if width <= 3 || len(s) <= width {
 		return s
 	}
-	return s[:width-3] + "..."
+	return s[:width-1] + "…"
 }
