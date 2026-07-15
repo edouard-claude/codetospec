@@ -53,6 +53,12 @@ shall bill prorated to the remaining days.
 ...
 ```
 
+> **New to this problem?** The [Field Guide to Code-to-Spec](docs/README.md)
+> is a tool-agnostic walkthrough of the discipline — the principles, the
+> [failure modes](docs/03-failure-modes.md) nobody warns you about (the
+> line-number trap, reduce truncation, metrics that lie…), and how the state
+> of the art fits together.
+
 ## The approach
 
 LLMs are good at reading code and bad at being trusted. `codetospec` keeps
